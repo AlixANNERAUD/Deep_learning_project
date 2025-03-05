@@ -8,17 +8,42 @@ dependencies = [
     "matplotlib>=3.10.1",
     "numpy>=2.2.3",
     "pandas>=2.2.3",
-    "torch>=2.6.0",
+]
+
+[project.optional-dependencies]
+cpu = [
+  "torch>=2.6.0",
+]
+cu124 = [
+  "torch>=2.6.0",
+]
+apple = [
+  "torch>=2.6.0",
+]
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "cu124" },
+    { extra = "apple" },
+  ],
 ]
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu124", extra = "cu124" },
 ]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
 [dependency-groups]
