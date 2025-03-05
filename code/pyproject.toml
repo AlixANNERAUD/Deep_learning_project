@@ -13,12 +13,15 @@ dependencies = [
 [project.optional-dependencies]
 cpu = [
   "torch>=2.6.0",
+  "torchvision>=0.21.0",
 ]
 cu124 = [
   "torch>=2.6.0",
+  "torchvision>=0.21.0",
 ]
 apple = [
   "torch>=2.6.0",
+  "torchvision>=0.21.0",
 ]
 
 [tool.uv]
@@ -32,6 +35,10 @@ conflicts = [
 
 [tool.uv.sources]
 torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu124", extra = "cu124" },
+]
+torchvision = [
   { index = "pytorch-cpu", extra = "cpu" },
   { index = "pytorch-cu124", extra = "cu124" },
 ]
