@@ -30,6 +30,7 @@ from skimage.color import label2rgb
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 
+OUTPUT_SHAPE = [270, 270]
 
 NUCLEI_MAP = {
     "nuclei_tumor": 1,
@@ -291,7 +292,7 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
 
     # Original image
     axes[0, 0].imshow(img)
-    axes[0, 0].set_title("Original Image")
+    axes[0, 0].set_title(f"Original Image ({img.shape[0]}x{img.shape[1]})")
     axes[0, 0].axis("off")
 
     # Instance mask only
@@ -340,6 +341,31 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
     plt.close(figure)
 
 
+def extract_patches(image, patch_size):
+    """Extract patches of specified size from an image.
+    
+    Args:
+        image: Input image or mask
+        patch_size: Size of patches [height, width]
+        
+    Returns:
+        List of patches and their coordinates [(patch, (y, x)), ...]
+    """
+    height, width = image.shape[:2]
+    patches = []
+    
+    # Extract patches with a sliding window approach
+    for y in range(0, height - patch_size[0] + 1, patch_size[0]):
+        for x in range(0, width - patch_size[1] + 1, patch_size[1]):
+            if len(image.shape) == 3:  # RGB image
+                patch = image[y:y+patch_size[0], x:x+patch_size[1], :]
+            else:  # Mask (2D)
+                patch = image[y:y+patch_size[0], x:x+patch_size[1]]
+            
+            patches.append((patch, (y, x)))
+    
+    return patches
+
 def process_image(
     image_path,
     nuclei_dir,
@@ -352,8 +378,6 @@ def process_image(
         image_path: Path to the image file
         nuclei_dir: Directory containing nuclei annotations
         output_dir: Directory to save processed data
-        type_mapping: Mapping from type names to integers (for cell classification)
-        type_key: Key in GeoJSON properties containing type information
         tissues_dir: Directory containing tissue annotations (for semantic segmentation)
     """
 
@@ -386,16 +410,25 @@ def process_image(
         img.shape,
         TISSUE_MAP,
     )
+    
+    # Extract patches of size OUTPUT_SHAPE
+    img_patches = extract_patches(img, OUTPUT_SHAPE)
+    nuclei_mask_patches = extract_patches(nuclei_mask, OUTPUT_SHAPE)
+    tissue_mask_patches = extract_patches(tissue_mask, OUTPUT_SHAPE)
+    
+    # Process and save each patch
+    for i, ((img_patch, coords), (nuclei_patch, _), (tissue_patch, _)) in enumerate(zip(img_patches, nuclei_mask_patches, tissue_mask_patches)):
+        y, x = coords
+        
+        # [RGB, inst, type] format for classification
+        output = np.zeros((OUTPUT_SHAPE[0], OUTPUT_SHAPE[1], 5), dtype=np.uint8)
+        output[:, :, :3] = img_patch
+        output[:, :, 3] = nuclei_patch
+        output[:, :, 4] = tissue_patch
 
-    # [RGB, inst, type] format for classification
-    output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
-    output[:, :, :3] = img
-    output[:, :, 3] = nuclei_mask
-    output[:, :, 4] = tissue_mask
-
-    # Save as numpy array
-    output_path = os.path.join(output_dir, f"{basename}.npy")
-    np.save(output_path, output)
+        # Save as numpy array
+        patch_output_path = os.path.join(output_dir, f"{basename}_y{y}_x{x}.npy")
+        np.save(patch_output_path, output)
 
 
 def process_file(npy_file, output_dir):
