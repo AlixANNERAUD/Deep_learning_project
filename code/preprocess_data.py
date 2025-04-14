@@ -16,7 +16,6 @@ Author: GitHub Copilot
 
 import os
 import argparse
-import json
 import numpy as np
 import tifffile
 import cv2
@@ -411,9 +410,7 @@ def process_file(npy_file, output_dir):
     visualize_masks(img, inst_mask, type_mask, basename, output_dir)
 
 
-def visualize_processed_data(
-    output_dir, nuclei_dir, max_threads=None
-):
+def visualize_processed_data(output_dir, nuclei_dir, max_threads=None):
     """Generate visualizations for already processed data."""
     vis_dir = os.path.join(output_dir, "visualizations")
     os.makedirs(vis_dir, exist_ok=True)
@@ -426,7 +423,6 @@ def visualize_processed_data(
 
     print(f"Generating visualizations for {len(npy_files)} processed files...")
 
-    success_count = 0
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {
             executor.submit(process_file, file, output_dir): file for file in npy_files
@@ -434,10 +430,7 @@ def visualize_processed_data(
         for future in tqdm(
             as_completed(futures), total=len(futures), desc="Generating visualizations"
         ):
-            if future.result():
-                success_count += 1
-
-    return success_count
+            future.result()
 
 
 def main():
@@ -481,13 +474,10 @@ def main():
     # Generate visualizations as a separate step if requested
     if args.visualize:
         print("Generating visualizations...")
-        vis_count = visualize_processed_data(
-            args.output, args.nucleis, args.max_threads
-        )
-        print(f"Generated {vis_count} visualizations")
+        visualize_processed_data(args.output, args.nucleis, args.max_threads)
         print(f"Visualizations saved to {os.path.join(args.output, 'visualizations')}")
 
-    print(f"Next step: Use extract_patches.py to create training patches")
+    print("Next step: Use extract_patches.py to create training patches")
 
 
 if __name__ == "__main__":
