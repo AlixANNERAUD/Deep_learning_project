@@ -9,7 +9,7 @@ This script converts TIFF images and GeoJSON annotations into the format require
 Usage:
   python preprocess_data.py --images_dir path/to/tiff/images --nuclei_dir path/to/nuclei/geojson
                            [--tissue_dir path/to/tissue/geojson] [--output_dir path/to/output]
-                           [--with_types] [--type_key classification]
+                           [--with_types] [--type_key classification] [--visualize]
 
 Author: GitHub Copilot
 """
@@ -26,6 +26,10 @@ from typing import List, Tuple
 from pydantic import field_validator, BaseModel, Field
 from pathlib import Path
 from typing import Literal, Union
+import matplotlib.pyplot as plt
+from skimage.color import label2rgb
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
 
 class GeometryPolygon(BaseModel):
@@ -96,13 +100,13 @@ def parse_args():
         "--images", required=True, help="Directory containing TIFF images", type=Path
     )
     parser.add_argument(
-        "--nuclei",
+        "--nucleis",
         required=True,
         help="Directory containing nuclei GeoJSON annotations",
         type=Path,
     )
     parser.add_argument(
-        "--tissue",
+        "--tissues",
         help="Directory containing tissue GeoJSON annotations (optional)",
         type=Path,
     )
@@ -123,18 +127,26 @@ def parse_args():
         help="Key in GeoJSON properties containing type information",
         type=str,
     )
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Generate visualization images of the masks for verification",
+    )
+    parser.add_argument(
+        "--max-threads",
+        type=int,
+        default=multiprocessing.cpu_count(),
+        help="Maximum number of threads to use for parallel processing (default: all CPU cores)",
+    )
 
     return parser.parse_args()
 
 
 def load_geojson(path: Path) -> GeoJSONData:
     """Load and validate GeoJSON data using Pydantic models."""
-    try:
-        file = path.open("r")
+    file = path.open("r")
 
-        return GeoJSONData.model_validate_json(file.read())
-    except Exception as e:
-        raise ValueError(f"Could not load GeoJSON file {path}: {e}")
+    return GeoJSONData.model_validate_json(file.read())
 
 
 def create_type_mapping(nuclei_dir, type_key="classification"):
@@ -189,20 +201,86 @@ def geojson_to_masks(
     image_shape: Tuple[int, int, int],
     type_mapping: dict[str, int] | None = None,
     type_key: str = "classification",
+    is_tissue: bool = False,
 ):
-    """Convert GeoJSON annotations to instance and type masks."""
+    """Convert GeoJSON annotations to instance and type masks.
+
+    Args:
+        geojson_path: Path to the GeoJSON file
+        image_shape: Shape of the image
+        type_mapping: Mapping from type names to integers
+        type_key: Key in GeoJSON properties containing type information
+        is_tissue: Whether this is a tissue annotation (for semantic segmentation)
+
+    Returns:
+        For nuclei: instance mask and type mask
+        For tissue: semantic segmentation mask
+    """
     # Initialize masks
-    inst_mask = np.zeros(image_shape[:2], dtype=np.int32)
-    type_mask = np.zeros(image_shape[:2], dtype=np.int32) if type_mapping else None
+    if is_tissue:
+        # For tissue segmentation, we only need a semantic mask
+        tissue_mask = np.zeros(image_shape[:2], dtype=np.int32)
 
-    # Load GeoJSON with Pydantic validation
-    data = load_geojson(geojson_path)
-    if data is None:
-        return inst_mask, type_mask
+        # Load GeoJSON with Pydantic validation
+        data = load_geojson(geojson_path)
+        if data is None:
+            return tissue_mask
 
-    # Process each annotation
-    for i, feature in enumerate(data.features, 1):  # Start from 1, 0 is background
-        try:
+        # Process each tissue annotation
+        for feature in data.features:
+            # Get tissue type
+            tissue_type = None
+            if hasattr(feature.properties, "classification"):
+                tissue_type = feature.properties.classification.name
+            elif hasattr(feature.properties, "tissue_type"):
+                tissue_type = feature.properties.tissue_type.name
+            elif hasattr(feature.properties, "type"):
+                tissue_type = feature.properties.type.name
+
+            # Skip if no tissue type or not in mapping
+            if not tissue_type or (type_mapping and tissue_type not in type_mapping):
+                continue
+
+            # Get tissue type value
+            tissue_value = type_mapping.get(tissue_type, 0) if type_mapping else 1
+
+            # Handle different geometry types
+            if feature.geometry.type == "Polygon":
+                polygons = [feature.geometry.coordinates[0]]
+            elif feature.geometry.type == "MultiPolygon":
+                polygons = [poly[0] for poly in feature.geometry.coordinates]
+            else:
+                print(f"Unsupported geometry type: {feature.geometry.type}, skipping")
+                continue
+
+            # Fill polygons in the mask
+            for polygon_coords in polygons:
+                # Convert to numpy array and ensure int32 type
+                points = np.array(polygon_coords, dtype=np.int32)
+
+                # Check if points have the right shape
+                if len(points.shape) != 2 or points.shape[1] != 2:
+                    print(
+                        f"Malformed polygon in tissue feature, skipping: {points.shape}"
+                    )
+                    continue
+
+                # Create tissue mask
+                cv2.fillPoly(tissue_mask, [points], tissue_value)
+
+        return tissue_mask
+    else:
+        # For nuclei: instance and type masks
+        inst_mask = np.zeros(image_shape[:2], dtype=np.int32)
+        type_mask = np.zeros(image_shape[:2], dtype=np.int32) if type_mapping else None
+
+        # Load GeoJSON with Pydantic validation
+        data = load_geojson(geojson_path)
+        if data is None:
+            return inst_mask, type_mask
+
+        # Process each annotation
+        for i, feature in enumerate(data.features, 1):  # Start from 1, 0 is background
             # Handle different geometry types
             if feature.geometry.type == "Polygon":
                 polygons = [feature.geometry.coordinates[0]]
@@ -214,62 +292,128 @@ def geojson_to_masks(
 
             # Process each polygon
             for polygon_coords in polygons:
-                # Ensure coordinates are valid and properly formatted
-                try:
-                    # Convert to numpy array and ensure int32 type
-                    points = np.array(polygon_coords, dtype=np.int32)
+                # Convert to numpy array and ensure int32 type
+                points = np.array(polygon_coords, dtype=np.int32)
 
-                    # Check if points have the right shape
-                    if len(points.shape) != 2 or points.shape[1] != 2:
-                        print(
-                            f"Malformed polygon in feature {i}, skipping: {points.shape}"
-                        )
-                        continue
-
-                    # Create instance mask
-                    cv2.fillPoly(inst_mask, [points], i)
-
-                    # Create type mask if needed
-                    if type_mapping:
-                        # Try to get classification info using the provided key
-                        type_info = None
-                        if type_key == "classification" and hasattr(
-                            feature.properties, "classification"
-                        ):
-                            type_info = feature.properties.classification
-                        elif type_key == "nucleus_type" and hasattr(
-                            feature.properties, "nucleus_type"
-                        ):
-                            type_info = feature.properties.nucleus_type
-                        elif type_key == "type" and hasattr(feature.properties, "type"):
-                            type_info = feature.properties.type
-
-                        if (
-                            type_info
-                            and hasattr(type_info, "name")
-                            and type_info.name in type_mapping
-                        ):
-                            type_int = type_mapping[type_info.name]
-                            cv2.fillPoly(type_mask, [points], type_int)
-                except ValueError as ve:
-                    print(f"Invalid polygon coordinates in feature {i}, skipping: {ve}")
+                # Check if points have the right shape
+                if len(points.shape) != 2 or points.shape[1] != 2:
+                    print(f"Malformed polygon in feature {i}, skipping: {points.shape}")
                     continue
-                except Exception as e:
-                    print(f"Error processing polygon for feature {i}: {e}")
-                    continue
-        except Exception as e:
-            print(f"Error processing feature {i}: {e}")
-            continue
 
-    return inst_mask, type_mask
+                # Create instance mask
+                cv2.fillPoly(inst_mask, [points], i)
+
+                # Create type mask if needed
+                if type_mapping:
+                    # Try to get classification info using the provided key
+                    type_info = None
+                    if type_key == "classification" and hasattr(
+                        feature.properties, "classification"
+                    ):
+                        type_info = feature.properties.classification
+                    elif type_key == "nucleus_type" and hasattr(
+                        feature.properties, "nucleus_type"
+                    ):
+                        type_info = feature.properties.nucleus_type
+                    elif type_key == "type" and hasattr(feature.properties, "type"):
+                        type_info = feature.properties.type
+
+                    if (
+                        type_info
+                        and hasattr(type_info, "name")
+                        and type_info.name in type_mapping
+                    ):
+                        type_int = type_mapping[type_info.name]
+                        cv2.fillPoly(type_mask, [points], type_int)
+
+        return inst_mask, type_mask
+
+
+def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
+    """Generate visualization of the masks for verification."""
+
+    if img.shape[2] > 3:
+        print(f"Image {basename} has more than 3 channels, skipping visualization")
+
+    # Create visualization directory
+    vis_dir = os.path.join(output_dir, "visualizations")
+    os.makedirs(vis_dir, exist_ok=True)
+
+    # 1. Instance mask visualization (random colors)
+    inst_overlay = label2rgb(inst_mask, bg_label=0, alpha=0.5)
+
+    figure, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    # Original image
+    axes[0, 0].imshow(img)
+    axes[0, 0].set_title("Original Image")
+    axes[0, 0].axis("off")
+
+    # Instance mask only
+    axes[0, 1].imshow(inst_overlay)
+    axes[0, 1].set_title("Instance Mask")
+    axes[0, 1].axis("off")
+
+    # Overlay instance mask on image
+    axes[1, 0].imshow(img)
+    axes[1, 0].imshow(inst_overlay, alpha=0.5)
+    axes[1, 0].set_title("Instance Mask Overlay")
+    axes[1, 0].axis("off")
+
+    # Type mask if available
+    if type_mask is not None:
+        type_overlay = label2rgb(type_mask, bg_label=0, alpha=0.5)
+        axes[1, 1].imshow(img)
+        axes[1, 1].imshow(type_overlay, alpha=0.5)
+        axes[1, 1].set_title("Type Mask Overlay")
+    else:
+        # Contour visualization as alternative
+        contour_img = img.copy()
+
+        # Find contours for each instance
+        unique_instances = np.unique(inst_mask)
+        unique_instances = unique_instances[unique_instances > 0]  # Skip background
+
+        # Draw contours
+        contours = []
+        for inst_id in unique_instances:
+            binary_mask = (inst_mask == inst_id).astype(np.uint8)
+            contour, _ = cv2.findContours(
+                binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            contours.extend(contour)
+
+        cv2.drawContours(contour_img, contours, -1, (0, 255, 0), 2)
+        axes[1, 1].imshow(contour_img)
+        axes[1, 1].set_title("Contour Visualization")
+
+    axes[1, 1].axis("off")
+
+    # Save figure
+    figure.tight_layout()
+    figure.savefig(os.path.join(vis_dir, f"{basename}_visualization.png"), dpi=200)
+    plt.close(figure)
 
 
 def process_image(
-    image_path, nuclei_dir, output_dir, type_mapping=None, type_key="classification"
+    image_path,
+    nuclei_dir,
+    output_dir,
+    type_mapping=None,
+    type_key="classification",
+    tissues_dir=None,
 ):
-    """Process a single image with its annotations."""
+    """Process a single image with its annotations.
+
+    Args:
+        image_path: Path to the image file
+        nuclei_dir: Directory containing nuclei annotations
+        output_dir: Directory to save processed data
+        type_mapping: Mapping from type names to integers (for cell classification)
+        type_key: Key in GeoJSON properties containing type information
+        tissues_dir: Directory containing tissue annotations (for semantic segmentation)
+    """
     try:
-        print(f"Processing {image_path}")
         # Load image
         img = tifffile.imread(image_path)
 
@@ -279,16 +423,60 @@ def process_image(
         elif img.shape[2] > 3:  # More than 3 channels
             img = img[:, :, :3]
 
-        # Get corresponding GeoJSON path
+        # Get base filename
         basename = os.path.basename(image_path).split(".")[0]
-        geojson_path = nuclei_dir / f"{basename}_tissue.geojson"
 
-        # Convert GeoJSON to masks
+        # Process nuclei annotations
+        nuclei_geojson_path = Path(os.path.join(nuclei_dir, f"{basename}.geojson"))
+        if not nuclei_geojson_path.exists():
+            # Try alternative naming pattern
+            nuclei_geojson_path = Path(
+                os.path.join(nuclei_dir, f"{basename}_nuclei.geojson")
+            )
+
+        if not nuclei_geojson_path.exists():
+            print(f"No nuclei annotation found for {basename}, skipping")
+            return False
+
+        # Convert nuclei GeoJSON to masks
         inst_mask, type_mask = geojson_to_masks(
-            geojson_path, img.shape, type_mapping, type_key
+            nuclei_geojson_path, img.shape, type_mapping, type_key, is_tissue=False
         )
 
-        # Create output array
+        # Process tissue annotations if provided
+        tissue_mask = None
+        if tissues_dir:
+            tissue_geojson_path = Path(os.path.join(tissues_dir, f"{basename}.geojson"))
+            if not tissue_geojson_path.exists():
+                # Try alternative naming pattern
+                tissue_geojson_path = Path(
+                    os.path.join(tissues_dir, f"{basename}_tissue.geojson")
+                )
+
+            if tissue_geojson_path.exists():
+                # Create tissue type mapping if not provided
+                tissue_type_mapping = {
+                    "tumor": 1,
+                    "stroma": 2,
+                    "epithelium": 3,
+                    "blood_vessel": 4,
+                    "necrotic": 5,
+                }
+
+                # Convert tissue GeoJSON to semantic segmentation mask
+                tissue_mask = geojson_to_masks(
+                    tissue_geojson_path,
+                    img.shape,
+                    tissue_type_mapping,
+                    type_key,
+                    is_tissue=True,
+                )
+
+                # Save tissue mask separately
+                tissue_output_path = os.path.join(output_dir, f"{basename}_tissue.npy")
+                np.save(tissue_output_path, tissue_mask)
+
+        # Create output array for nuclei
         if type_mapping is not None:
             # [RGB, inst, type] format for classification
             output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
@@ -311,6 +499,47 @@ def process_image(
         return False
 
 
+def process_file(npy_file, output_dir):
+    data = np.load(npy_file)
+    basename = os.path.basename(npy_file).split(".")[0]
+
+    img = data[:, :, :3]
+    inst_mask = data[:, :, 3]
+
+    type_mask = data[:, :, 4] if data.shape[2] > 4 else None
+
+    visualize_masks(img, inst_mask, type_mask, basename, output_dir)
+
+
+def visualize_processed_data(
+    output_dir, nuclei_dir, type_key="classification", max_threads=None
+):
+    """Generate visualizations for already processed data."""
+    vis_dir = os.path.join(output_dir, "visualizations")
+    os.makedirs(vis_dir, exist_ok=True)
+
+    npy_files = glob.glob(os.path.join(output_dir, "*.npy"))
+
+    if not npy_files:
+        print(f"No processed data found in {output_dir}")
+        return 0
+
+    print(f"Generating visualizations for {len(npy_files)} processed files...")
+
+    success_count = 0
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        futures = {
+            executor.submit(process_file, file, output_dir): file for file in npy_files
+        }
+        for future in tqdm(
+            as_completed(futures), total=len(futures), desc="Generating visualizations"
+        ):
+            if future.result():
+                success_count += 1
+
+    return success_count
+
+
 def main():
     """Main function."""
     args = parse_args()
@@ -318,11 +547,13 @@ def main():
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
 
+    plt.rcParams.update({"figure.max_open_warning": 0})
+
     # Create type mapping if needed
     type_mapping = None
     if args.with_types:
         print("Creating type mapping...")
-        type_mapping, type_info = create_type_mapping(args.nuclei, args.type_key)
+        type_mapping, type_info = create_type_mapping(args.nucleis, args.type_key)
         with open(os.path.join(args.output, "type_info.json"), "w") as f:
             json.dump(type_info, f, indent=2)
 
@@ -332,14 +563,43 @@ def main():
     )
 
     success_count = 0
-    for image_path in tqdm(image_files, desc="Processing images"):
-        if process_image(
-            image_path, args.nuclei, args.output, type_mapping, args.type_key
+
+    # Process images in parallel with ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
+        futures = {
+            executor.submit(
+                process_image,
+                image_path,
+                args.nucleis,
+                args.output,
+                type_mapping,
+                args.type_key,
+                args.tissues,
+            ): image_path
+            for image_path in image_files
+        }
+
+        for future in tqdm(
+            as_completed(futures), total=len(futures), desc="Processing images"
         ):
-            success_count += 1
+            try:
+                if future.result():
+                    success_count += 1
+            except Exception as e:
+                print(f"Error processing {futures[future]}: {e}")
 
     print(f"Processed {success_count}/{len(image_files)} images successfully")
     print(f"Output saved to {args.output}")
+
+    # Generate visualizations as a separate step if requested
+    if args.visualize:
+        print("Generating visualizations...")
+        vis_count = visualize_processed_data(
+            args.output, args.nucleis, args.type_key, args.max_threads
+        )
+        print(f"Generated {vis_count} visualizations")
+        print(f"Visualizations saved to {os.path.join(args.output, 'visualizations')}")
+
     print(f"Next step: Use extract_patches.py to create training patches")
 
 
