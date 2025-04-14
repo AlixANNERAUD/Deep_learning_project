@@ -33,24 +33,27 @@ import multiprocessing
 
 
 NUCLEI_MAP = {
-    "tumor": 1,
-    "lymphocyte": 2,
-    "plasma_cell": 3,
-    "histiocyte": 4,
-    "melanophage": 5,
-    "stroma": 7,
-    "epithelium": 8,
-    "endothelium": 9,
-    "apoptosis": 10,
+    "nuclei_tumor": 1,
+    "nuclei_lymphocyte": 2,
+    "nuclei_plasma_cell": 3,
+    "nuclei_histiocyte": 4,
+    "nuclei_melanophage": 5,
+    "nuclei_neutrophil": 6,
+    "nuclei_stroma": 7,
+    "nuclei_epithelium": 8,
+    "nuclei_endothelium": 9,
+    "nuclei_apoptosis": 10,
 }
 
 # Create tissue type mapping
 TISSUE_MAP = {
-    "tumor": 1,
-    "stroma": 2,
-    "epithelium": 3,
-    "blood_vessel": 4,
-    "necrotic": 5,
+    "tissue_tumor": 1,
+    "tissue_stroma": 2,
+    "tissue_epithelium": 3,
+    "tissue_blood_vessel": 4,
+    "tissue_necrosis": 5,
+    "tissue_epidermis": 6,
+    "tissue_white_background": 7,
 }
 
 
@@ -140,17 +143,6 @@ def parse_args():
         type=Path,
     )
     parser.add_argument(
-        "--with-types",
-        action="store_true",
-        help="Include type information (for classification)",
-    )
-    parser.add_argument(
-        "--type-key",
-        default="classification",
-        help="Key in GeoJSON properties containing type information",
-        type=str,
-    )
-    parser.add_argument(
         "--visualize",
         action="store_true",
         help="Generate visualization images of the masks for verification",
@@ -222,9 +214,7 @@ def create_type_mapping(nuclei_dir, type_key="classification"):
 def geojson_to_masks(
     geojson_path: Path,
     image_shape: Tuple[int, int, int],
-    type_mapping: dict[str, int] | None = None,
-    type_key: str = "classification",
-    is_tissue: bool = False,
+    type_mapping: dict[str, int],
 ):
     """Convert GeoJSON annotations to instance and type masks.
 
@@ -239,111 +229,50 @@ def geojson_to_masks(
         For nuclei: instance mask and type mask
         For tissue: semantic segmentation mask
     """
-    # Initialize masks
-    if is_tissue:
-        # For tissue segmentation, we only need a semantic mask
-        tissue_mask = np.zeros(image_shape[:2], dtype=np.int32)
 
-        # Load GeoJSON with Pydantic validation
-        data = load_geojson(geojson_path)
-        if data is None:
-            return tissue_mask
+    # For nuclei: instance and type masks
+    inst_mask = np.zeros(image_shape[:2], dtype=np.int32)
+    type_mask = np.zeros(image_shape[:2], dtype=np.int32) if type_mapping else None
 
-        # Process each tissue annotation
-        for feature in data.features:
-            # Get tissue type
-            tissue_type = feature.properties.classification.name
-
-            # Skip if no tissue type or not in mapping
-            if not tissue_type or (type_mapping and tissue_type not in type_mapping):
-                continue
-
-            # Get tissue type value
-            tissue_value = type_mapping.get(tissue_type, 0) if type_mapping else 1
-
-            # Handle different geometry types
-            if feature.geometry.type == "Polygon":
-                polygons = [feature.geometry.coordinates[0]]
-            elif feature.geometry.type == "MultiPolygon":
-                polygons = [poly[0] for poly in feature.geometry.coordinates]
-            else:
-                print(f"Unsupported geometry type: {feature.geometry.type}, skipping")
-                continue
-
-            # Fill polygons in the mask
-            for polygon_coords in polygons:
-                # Convert to numpy array and ensure int32 type
-                points = np.array(polygon_coords, dtype=np.int32)
-
-                # Check if points have the right shape
-                if len(points.shape) != 2 or points.shape[1] != 2:
-                    print(
-                        f"Malformed polygon in tissue feature, skipping: {points.shape}"
-                    )
-                    continue
-
-                # Create tissue mask
-                cv2.fillPoly(tissue_mask, [points], tissue_value)
-
-        return tissue_mask
-    else:
-        # For nuclei: instance and type masks
-        inst_mask = np.zeros(image_shape[:2], dtype=np.int32)
-        type_mask = np.zeros(image_shape[:2], dtype=np.int32) if type_mapping else None
-
-        # Load GeoJSON with Pydantic validation
-        data = load_geojson(geojson_path)
-        if data is None:
-            return inst_mask, type_mask
-
-        # Process each annotation
-        for i, feature in enumerate(data.features, 1):  # Start from 1, 0 is background
-            # Handle different geometry types
-            if feature.geometry.type == "Polygon":
-                polygons = [feature.geometry.coordinates[0]]
-            elif feature.geometry.type == "MultiPolygon":
-                polygons = [poly[0] for poly in feature.geometry.coordinates]
-            else:
-                print(f"Unsupported geometry type: {feature.geometry.type}, skipping")
-                continue
-
-            # Process each polygon
-            for polygon_coords in polygons:
-                # Convert to numpy array and ensure int32 type
-                points = np.array(polygon_coords, dtype=np.int32)
-
-                # Check if points have the right shape
-                if len(points.shape) != 2 or points.shape[1] != 2:
-                    print(f"Malformed polygon in feature {i}, skipping: {points.shape}")
-                    continue
-
-                # Create instance mask
-                cv2.fillPoly(inst_mask, [points], i)
-
-                # Create type mask if needed
-                if type_mapping:
-                    # Try to get classification info using the provided key
-                    type_info = None
-                    if type_key == "classification" and hasattr(
-                        feature.properties, "classification"
-                    ):
-                        type_info = feature.properties.classification
-                    elif type_key == "nucleus_type" and hasattr(
-                        feature.properties, "nucleus_type"
-                    ):
-                        type_info = feature.properties.nucleus_type
-                    elif type_key == "type" and hasattr(feature.properties, "type"):
-                        type_info = feature.properties.type
-
-                    if (
-                        type_info
-                        and hasattr(type_info, "name")
-                        and type_info.name in type_mapping
-                    ):
-                        type_int = type_mapping[type_info.name]
-                        cv2.fillPoly(type_mask, [points], type_int)
-
+    # Load GeoJSON with Pydantic validation
+    data = load_geojson(geojson_path)
+    if data is None:
         return inst_mask, type_mask
+
+    # Process each annotation
+    for i, feature in enumerate(data.features, 1):  # Start from 1, 0 is background
+        # Handle different geometry types
+        if feature.geometry.type == "Polygon":
+            polygons = [feature.geometry.coordinates[0]]
+        elif feature.geometry.type == "MultiPolygon":
+            polygons = [poly[0] for poly in feature.geometry.coordinates]
+        else:
+            print(f"Unsupported geometry type: {feature.geometry.type}, skipping")
+            continue
+
+        # Process each polygon
+        for polygon_coords in polygons:
+            # Convert to numpy array and ensure int32 type
+            points = np.array(polygon_coords, dtype=np.int32)
+
+            # Check if points have the right shape
+            if len(points.shape) != 2 or points.shape[1] != 2:
+                print(f"Malformed polygon in feature {i}, skipping: {points.shape}")
+                continue
+
+            # Create instance mask
+            cv2.fillPoly(inst_mask, [points], i)
+
+            # Try to get classification info using the provided key
+            type_name = feature.properties.classification.name
+            type_int = type_mapping.get(type_name)
+            if type_int:
+                cv2.fillPoly(type_mask, [points], type_int)
+            else:
+                print(f"Type {type_name} not found in mapping, skipping")
+                continue
+
+    return type_mask
 
 
 def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
@@ -417,8 +346,6 @@ def process_image(
     nuclei_dir,
     tissues_dir,
     output_dir,
-    type_mapping=None,
-    type_key="classification",
 ):
     """Process a single image with its annotations.
 
@@ -445,15 +372,12 @@ def process_image(
 
     # Process nuclei annotations
     nuclei_geojson_path = nuclei_dir / f"{basename}_nuclei.geojson"
-    
+
     # Use the global NUCLEI_MAP instead of the passed type_mapping
     # Convert nuclei GeoJSON to masks
-    inst_mask, type_mask = geojson_to_masks(
-        nuclei_geojson_path, img.shape, NUCLEI_MAP, type_key, is_tissue=False
-    )
+    inst_mask, type_mask = geojson_to_masks(nuclei_geojson_path, img.shape, NUCLEI_MAP)
 
     # Process tissue annotations (now required)
-    tissue_mask = None
     tissue_geojson_path = tissues_dir / f"{basename}_tissue.geojson"
 
     # Use the global TISSUE_MAP instead of creating a new mapping
@@ -462,8 +386,6 @@ def process_image(
         tissue_geojson_path,
         img.shape,
         TISSUE_MAP,
-        type_key,
-        is_tissue=True,
     )
 
     # [RGB, inst, type] format for classification
@@ -543,7 +465,6 @@ def main():
                 args.nucleis,
                 args.tissues,
                 args.output,
-                args.type_key
             ): image_path
             for image_path in image_files
         }
