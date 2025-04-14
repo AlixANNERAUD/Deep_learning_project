@@ -32,6 +32,28 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 
 
+NUCLEI_MAP = {
+    "tumor": 1,
+    "lymphocyte": 2,
+    "plasma_cell": 3,
+    "histiocyte": 4,
+    "melanophage": 5,
+    "stroma": 7,
+    "epithelium": 8,
+    "endothelium": 9,
+    "apoptosis": 10,
+}
+
+# Create tissue type mapping
+TISSUE_MAP = {
+    "tumor": 1,
+    "stroma": 2,
+    "epithelium": 3,
+    "blood_vessel": 4,
+    "necrotic": 5,
+}
+
+
 class GeometryPolygon(BaseModel):
     """GeoJSON Polygon geometry."""
 
@@ -230,13 +252,7 @@ def geojson_to_masks(
         # Process each tissue annotation
         for feature in data.features:
             # Get tissue type
-            tissue_type = None
-            if hasattr(feature.properties, "classification"):
-                tissue_type = feature.properties.classification.name
-            elif hasattr(feature.properties, "tissue_type"):
-                tissue_type = feature.properties.tissue_type.name
-            elif hasattr(feature.properties, "type"):
-                tissue_type = feature.properties.type.name
+            tissue_type = feature.properties.classification.name
 
             # Skip if no tissue type or not in mapping
             if not tissue_type or (type_mapping and tissue_type not in type_mapping):
@@ -399,10 +415,10 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
 def process_image(
     image_path,
     nuclei_dir,
+    tissues_dir,
     output_dir,
     type_mapping=None,
     type_key="classification",
-    tissues_dir=None,
 ):
     """Process a single image with its annotations.
 
@@ -414,81 +430,51 @@ def process_image(
         type_key: Key in GeoJSON properties containing type information
         tissues_dir: Directory containing tissue annotations (for semantic segmentation)
     """
-    try:
-        # Load image
-        img = tifffile.imread(image_path)
 
-        # Ensure image is RGB
-        if len(img.shape) == 2:  # Grayscale
-            img = np.stack([img, img, img], axis=-1)
-        elif img.shape[2] > 3:  # More than 3 channels
-            img = img[:, :, :3]
+    # Load image
+    img = tifffile.imread(image_path)
 
-        # Get base filename
-        basename = os.path.basename(image_path).split(".")[0]
+    # Ensure image is RGB
+    if len(img.shape) == 2:  # Grayscale
+        img = np.stack([img, img, img], axis=-1)
+    elif img.shape[2] > 3:  # More than 3 channels
+        img = img[:, :, :3]
 
-        # Process nuclei annotations
-        nuclei_geojson_path = Path(os.path.join(nuclei_dir, f"{basename}.geojson"))
-        if not nuclei_geojson_path.exists():
-            # Try alternative naming pattern
-            nuclei_geojson_path = Path(
-                os.path.join(nuclei_dir, f"{basename}_nuclei.geojson")
-            )
+    # Get base filename
+    basename = os.path.basename(image_path).split(".")[0]
 
-        if not nuclei_geojson_path.exists():
-            print(f"No nuclei annotation found for {basename}, skipping")
-            return False
+    # Process nuclei annotations
+    nuclei_geojson_path = nuclei_dir / f"{basename}_nuclei.geojson"
+    
+    # Use the global NUCLEI_MAP instead of the passed type_mapping
+    # Convert nuclei GeoJSON to masks
+    inst_mask, type_mask = geojson_to_masks(
+        nuclei_geojson_path, img.shape, NUCLEI_MAP, type_key, is_tissue=False
+    )
 
-        # Convert nuclei GeoJSON to masks
-        inst_mask, type_mask = geojson_to_masks(
-            nuclei_geojson_path, img.shape, type_mapping, type_key, is_tissue=False
-        )
+    # Process tissue annotations (now required)
+    tissue_mask = None
+    tissue_geojson_path = tissues_dir / f"{basename}_tissue.geojson"
 
-        # Process tissue annotations (now required)
-        tissue_mask = None
-        tissue_geojson_path = Path(os.path.join(tissues_dir, f"{basename}.geojson"))
-        if not tissue_geojson_path.exists():
-            # Try alternative naming pattern
-            tissue_geojson_path = Path(
-                os.path.join(tissues_dir, f"{basename}_tissue.geojson")
-            )
+    # Use the global TISSUE_MAP instead of creating a new mapping
+    # Convert tissue GeoJSON to semantic segmentation mask
+    tissue_mask = geojson_to_masks(
+        tissue_geojson_path,
+        img.shape,
+        TISSUE_MAP,
+        type_key,
+        is_tissue=True,
+    )
 
-        if not tissue_geojson_path.exists():
-            print(f"No tissue annotation found for {basename}, skipping")
-            return False
+    # [RGB, inst, type] format for classification
+    output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
+    output[:, :, :3] = img
+    output[:, :, 3] = type_mask
+    output[:, :, 4] = tissue_mask
 
-        # Create tissue type mapping
-        tissue_type_mapping = {
-            "tumor": 1,
-            "stroma": 2,
-            "epithelium": 3,
-            "blood_vessel": 4,
-            "necrotic": 5,
-        }
-
-        # Convert tissue GeoJSON to semantic segmentation mask
-        tissue_mask = geojson_to_masks(
-            tissue_geojson_path,
-            img.shape,
-            tissue_type_mapping,
-            type_key,
-            is_tissue=True,
-        )
-
-        # [RGB, inst, type] format for classification
-        output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
-        output[:, :, :3] = img
-        output[:, :, 3] = type_mask
-        output[:, :, 4] = tissue_mask
-
-        # Save as numpy array
-        output_path = os.path.join(output_dir, f"{basename}.npy")
-        np.save(output_path, output)
-
-        return True
-    except Exception as e:
-        print(f"Error processing {image_path}: {e}")
-        return False
+    # Save as numpy array
+    output_path = os.path.join(output_dir, f"{basename}.npy")
+    np.save(output_path, output)
 
 
 def process_file(npy_file, output_dir):
@@ -541,32 +527,6 @@ def main():
 
     plt.rcParams.update({"figure.max_open_warning": 0})
 
-    # Create type mapping if needed
-    type_mapping = None
-    if args.with_types:
-        print("Creating type mapping...")
-        type_mapping, type_info = create_type_mapping(args.nucleis, args.type_key)
-        with open(os.path.join(args.output, "type_info.json"), "w") as f:
-            json.dump(type_info, f, indent=2)
-
-    # Create tissue type mapping
-    tissue_type_mapping = {
-        "tumor": 1,
-        "stroma": 2,
-        "epithelium": 3,
-        "blood_vessel": 4,
-        "necrotic": 5,
-    }
-
-    # Save tissue type mapping
-    tissue_info = {"type_info": {"0": {"name": "background", "color": [0, 0, 0]}}}
-    for tissue_type, idx in tissue_type_mapping.items():
-        color = np.random.randint(0, 256, 3).tolist()
-        tissue_info["type_info"][str(idx)] = {"name": tissue_type, "color": color}
-
-    with open(os.path.join(args.output, "tissue_type_info.json"), "w") as f:
-        json.dump(tissue_info, f, indent=2)
-
     # Process all TIFF images
     image_files = glob.glob(os.path.join(args.images, "*.tif")) + glob.glob(
         os.path.join(args.images, "*.tiff")
@@ -581,10 +541,9 @@ def main():
                 process_image,
                 image_path,
                 args.nucleis,
-                args.output,
-                type_mapping,
-                args.type_key,
                 args.tissues,
+                args.output,
+                args.type_key
             ): image_path
             for image_path in image_files
         }
@@ -592,11 +551,8 @@ def main():
         for future in tqdm(
             as_completed(futures), total=len(futures), desc="Processing images"
         ):
-            try:
-                if future.result():
-                    success_count += 1
-            except Exception as e:
-                print(f"Error processing {futures[future]}: {e}")
+            if future.result():
+                success_count += 1
 
     print(f"Processed {success_count}/{len(image_files)} images successfully")
     print(f"Output saved to {args.output}")
