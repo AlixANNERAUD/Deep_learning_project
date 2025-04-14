@@ -107,7 +107,8 @@ def parse_args():
     )
     parser.add_argument(
         "--tissues",
-        help="Directory containing tissue GeoJSON annotations (optional)",
+        required=True,
+        help="Directory containing tissue GeoJSON annotations",
         type=Path,
     )
     parser.add_argument(
@@ -443,51 +444,42 @@ def process_image(
             nuclei_geojson_path, img.shape, type_mapping, type_key, is_tissue=False
         )
 
-        # Process tissue annotations if provided
+        # Process tissue annotations (now required)
         tissue_mask = None
-        if tissues_dir:
-            tissue_geojson_path = Path(os.path.join(tissues_dir, f"{basename}.geojson"))
-            if not tissue_geojson_path.exists():
-                # Try alternative naming pattern
-                tissue_geojson_path = Path(
-                    os.path.join(tissues_dir, f"{basename}_tissue.geojson")
-                )
+        tissue_geojson_path = Path(os.path.join(tissues_dir, f"{basename}.geojson"))
+        if not tissue_geojson_path.exists():
+            # Try alternative naming pattern
+            tissue_geojson_path = Path(
+                os.path.join(tissues_dir, f"{basename}_tissue.geojson")
+            )
 
-            if tissue_geojson_path.exists():
-                # Create tissue type mapping if not provided
-                tissue_type_mapping = {
-                    "tumor": 1,
-                    "stroma": 2,
-                    "epithelium": 3,
-                    "blood_vessel": 4,
-                    "necrotic": 5,
-                }
+        if not tissue_geojson_path.exists():
+            print(f"No tissue annotation found for {basename}, skipping")
+            return False
 
-                # Convert tissue GeoJSON to semantic segmentation mask
-                tissue_mask = geojson_to_masks(
-                    tissue_geojson_path,
-                    img.shape,
-                    tissue_type_mapping,
-                    type_key,
-                    is_tissue=True,
-                )
+        # Create tissue type mapping
+        tissue_type_mapping = {
+            "tumor": 1,
+            "stroma": 2,
+            "epithelium": 3,
+            "blood_vessel": 4,
+            "necrotic": 5,
+        }
 
-                # Save tissue mask separately
-                tissue_output_path = os.path.join(output_dir, f"{basename}_tissue.npy")
-                np.save(tissue_output_path, tissue_mask)
+        # Convert tissue GeoJSON to semantic segmentation mask
+        tissue_mask = geojson_to_masks(
+            tissue_geojson_path,
+            img.shape,
+            tissue_type_mapping,
+            type_key,
+            is_tissue=True,
+        )
 
-        # Create output array for nuclei
-        if type_mapping is not None:
-            # [RGB, inst, type] format for classification
-            output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
-            output[:, :, :3] = img
-            output[:, :, 3] = inst_mask
-            output[:, :, 4] = type_mask
-        else:
-            # [RGB, inst] format for instance segmentation only
-            output = np.zeros((img.shape[0], img.shape[1], 4), dtype=np.uint8)
-            output[:, :, :3] = img
-            output[:, :, 3] = inst_mask
+        # [RGB, inst, type] format for classification
+        output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
+        output[:, :, :3] = img
+        output[:, :, 3] = type_mask
+        output[:, :, 4] = tissue_mask
 
         # Save as numpy array
         output_path = os.path.join(output_dir, f"{basename}.npy")
@@ -556,6 +548,24 @@ def main():
         type_mapping, type_info = create_type_mapping(args.nucleis, args.type_key)
         with open(os.path.join(args.output, "type_info.json"), "w") as f:
             json.dump(type_info, f, indent=2)
+
+    # Create tissue type mapping
+    tissue_type_mapping = {
+        "tumor": 1,
+        "stroma": 2,
+        "epithelium": 3,
+        "blood_vessel": 4,
+        "necrotic": 5,
+    }
+
+    # Save tissue type mapping
+    tissue_info = {"type_info": {"0": {"name": "background", "color": [0, 0, 0]}}}
+    for tissue_type, idx in tissue_type_mapping.items():
+        color = np.random.randint(0, 256, 3).tolist()
+        tissue_info["type_info"][str(idx)] = {"name": tissue_type, "color": color}
+
+    with open(os.path.join(args.output, "tissue_type_info.json"), "w") as f:
+        json.dump(tissue_info, f, indent=2)
 
     # Process all TIFF images
     image_files = glob.glob(os.path.join(args.images, "*.tif")) + glob.glob(
