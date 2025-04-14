@@ -375,7 +375,7 @@ def process_image(
 
     # Use the global NUCLEI_MAP instead of the passed type_mapping
     # Convert nuclei GeoJSON to masks
-    inst_mask, type_mask = geojson_to_masks(nuclei_geojson_path, img.shape, NUCLEI_MAP)
+    nuclei_mask = geojson_to_masks(nuclei_geojson_path, img.shape, NUCLEI_MAP)
 
     # Process tissue annotations (now required)
     tissue_geojson_path = tissues_dir / f"{basename}_tissue.geojson"
@@ -391,7 +391,7 @@ def process_image(
     # [RGB, inst, type] format for classification
     output = np.zeros((img.shape[0], img.shape[1], 5), dtype=np.uint8)
     output[:, :, :3] = img
-    output[:, :, 3] = type_mask
+    output[:, :, 3] = nuclei_mask
     output[:, :, 4] = tissue_mask
 
     # Save as numpy array
@@ -412,7 +412,7 @@ def process_file(npy_file, output_dir):
 
 
 def visualize_processed_data(
-    output_dir, nuclei_dir, type_key="classification", max_threads=None
+    output_dir, nuclei_dir, max_threads=None
 ):
     """Generate visualizations for already processed data."""
     vis_dir = os.path.join(output_dir, "visualizations")
@@ -482,7 +482,7 @@ def main():
     if args.visualize:
         print("Generating visualizations...")
         vis_count = visualize_processed_data(
-            args.output, args.nucleis, args.type_key, args.max_threads
+            args.output, args.nucleis, args.max_threads
         )
         print(f"Generated {vis_count} visualizations")
         print(f"Visualizations saved to {os.path.join(args.output, 'visualizations')}")
