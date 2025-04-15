@@ -280,6 +280,7 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
 
     if img.shape[2] > 3:
         print(f"Image {basename} has more than 3 channels, skipping visualization")
+        return
 
     # Create visualization directory
     vis_dir = os.path.join(output_dir, "visualizations")
@@ -300,38 +301,60 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
     axes[0, 1].set_title("Instance Mask")
     axes[0, 1].axis("off")
 
+    # Create legend for nuclei types using NUCLEI_MAP
+    # Reverse the map to get from ID to name
+    nuclei_reverse_map = {v: k for k, v in NUCLEI_MAP.items()}
+    
+    # Show all available nuclei types in the legend regardless of whether they appear in the image
+    patches = []
+    labels = []
+    
+    # Add entries for all possible nuclei types
+    for type_id, type_key in sorted(nuclei_reverse_map.items()):
+        # Create a single-pixel array with this ID and get its color from label2rgb
+        color = label2rgb(np.array([[type_id]]), bg_label=0)[0, 0]
+        patches.append(plt.Rectangle((0, 0), 1, 1, fc=color))
+        # Clean up the name (remove "nuclei_" prefix)
+        type_name = type_key.replace("nuclei_", "")
+        labels.append(f"{type_name} ({type_id})")
+    
+    # Add legend outside of the plot
+    if patches:
+        axes[0, 1].legend(patches, labels, 
+                         loc='center left', bbox_to_anchor=(1, 0.5), 
+                         fontsize='small', frameon=True, title="Nuclei Types")
+
     # Overlay instance mask on image
     axes[1, 0].imshow(img)
     axes[1, 0].imshow(inst_overlay, alpha=0.5)
     axes[1, 0].set_title("Instance Mask Overlay")
     axes[1, 0].axis("off")
 
-    # Type mask if available
-    if type_mask is not None:
-        type_overlay = label2rgb(type_mask, bg_label=0, alpha=0.5)
-        axes[1, 1].imshow(img)
-        axes[1, 1].imshow(type_overlay, alpha=0.5)
-        axes[1, 1].set_title("Type Mask Overlay")
-    else:
-        # Contour visualization as alternative
-        contour_img = img.copy()
-
-        # Find contours for each instance
-        unique_instances = np.unique(inst_mask)
-        unique_instances = unique_instances[unique_instances > 0]  # Skip background
-
-        # Draw contours
-        contours = []
-        for inst_id in unique_instances:
-            binary_mask = (inst_mask == inst_id).astype(np.uint8)
-            contour, _ = cv2.findContours(
-                binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            contours.extend(contour)
-
-        cv2.drawContours(contour_img, contours, -1, (0, 255, 0), 2)
-        axes[1, 1].imshow(contour_img)
-        axes[1, 1].set_title("Contour Visualization")
+    type_overlay = label2rgb(type_mask, bg_label=0, alpha=0.5)
+    axes[1, 1].imshow(img)
+    axes[1, 1].imshow(type_overlay, alpha=0.5)
+    axes[1, 1].set_title("Type Mask Overlay")
+    
+    # Create legend for tissue types using TISSUE_MAP
+    tissue_reverse_map = {v: k for k, v in TISSUE_MAP.items()}
+    
+    # Show all available tissue types in the legend
+    patches = []
+    labels = []
+    
+    # Add entries for all possible tissue types
+    for type_id, type_key in sorted(tissue_reverse_map.items()):
+        color = label2rgb(np.array([[type_id]]), bg_label=0)[0, 0]
+        patches.append(plt.Rectangle((0, 0), 1, 1, fc=color))
+        # Clean up the name (remove "tissue_" prefix)
+        type_name = type_key.replace("tissue_", "")
+        labels.append(f"{type_name} ({type_id})")
+    
+    # Add legend outside of the plot
+    if patches:
+        axes[1, 1].legend(patches, labels, 
+                            loc='center left', bbox_to_anchor=(1, 0.5), 
+                            fontsize='small', frameon=True, title="Tissue Types")
 
     axes[1, 1].axis("off")
 
@@ -343,28 +366,29 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
 
 def extract_patches(image, patch_size):
     """Extract patches of specified size from an image.
-    
+
     Args:
         image: Input image or mask
         patch_size: Size of patches [height, width]
-        
+
     Returns:
         List of patches and their coordinates [(patch, (y, x)), ...]
     """
     height, width = image.shape[:2]
     patches = []
-    
+
     # Extract patches with a sliding window approach
     for y in range(0, height - patch_size[0] + 1, patch_size[0]):
         for x in range(0, width - patch_size[1] + 1, patch_size[1]):
             if len(image.shape) == 3:  # RGB image
-                patch = image[y:y+patch_size[0], x:x+patch_size[1], :]
+                patch = image[y : y + patch_size[0], x : x + patch_size[1], :]
             else:  # Mask (2D)
-                patch = image[y:y+patch_size[0], x:x+patch_size[1]]
-            
+                patch = image[y : y + patch_size[0], x : x + patch_size[1]]
+
             patches.append((patch, (y, x)))
-    
+
     return patches
+
 
 def process_image(
     image_path,
@@ -410,16 +434,18 @@ def process_image(
         img.shape,
         TISSUE_MAP,
     )
-    
+
     # Extract patches of size OUTPUT_SHAPE
     img_patches = extract_patches(img, OUTPUT_SHAPE)
     nuclei_mask_patches = extract_patches(nuclei_mask, OUTPUT_SHAPE)
     tissue_mask_patches = extract_patches(tissue_mask, OUTPUT_SHAPE)
-    
+
     # Process and save each patch
-    for i, ((img_patch, coords), (nuclei_patch, _), (tissue_patch, _)) in enumerate(zip(img_patches, nuclei_mask_patches, tissue_mask_patches)):
+    for i, ((img_patch, coords), (nuclei_patch, _), (tissue_patch, _)) in enumerate(
+        zip(img_patches, nuclei_mask_patches, tissue_mask_patches)
+    ):
         y, x = coords
-        
+
         # [RGB, inst, type] format for classification
         output = np.zeros((OUTPUT_SHAPE[0], OUTPUT_SHAPE[1], 5), dtype=np.uint8)
         output[:, :, :3] = img_patch
