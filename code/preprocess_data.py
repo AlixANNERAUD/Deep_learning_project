@@ -354,11 +354,13 @@ def plot_overlay(image, mask, axe, color_map, mapping):
 
     # Add legend if we have items
     if patches:
+        # Place legend below the plot
         axe.legend(
             patches,
             labels,
-            loc="best",
-            fontsize="x-small",
+            loc='upper center', 
+            bbox_to_anchor=(0.5, -0.15),
+            fontsize='x-small',
             framealpha=0.7,
             ncol=2 if len(patches) > 5 else 1,
         )
