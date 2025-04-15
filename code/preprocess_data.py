@@ -289,11 +289,12 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
     # 1. Instance mask visualization (random colors)
     inst_overlay = label2rgb(inst_mask, bg_label=0, alpha=0.5)
 
-    figure, axes = plt.subplots(2, 2, figsize=(15, 10))
+    # Create a smaller figure with lower DPI for faster rendering
+    figure, axes = plt.subplots(2, 2, figsize=(10, 8), dpi=100)
 
     # Original image
     axes[0, 0].imshow(img)
-    axes[0, 0].set_title(f"Original Image ({img.shape[0]}x{img.shape[1]})")
+    axes[0, 0].set_title(f"Original Image")
     axes[0, 0].axis("off")
 
     # Instance mask only
@@ -305,62 +306,50 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
     # Reverse the map to get from ID to name
     nuclei_reverse_map = {v: k for k, v in NUCLEI_MAP.items()}
     
-    # Show all available nuclei types in the legend regardless of whether they appear in the image
+    # Add minimal legend entries - only add the most important types
     patches = []
     labels = []
-    
-    # Add entries for all possible nuclei types
-    for type_id, type_key in sorted(nuclei_reverse_map.items()):
-        # Create a single-pixel array with this ID and get its color from label2rgb
+    for type_id in sorted(nuclei_reverse_map.keys())[:5]:  # Limit to first 5 types
+        type_key = nuclei_reverse_map[type_id]
         color = label2rgb(np.array([[type_id]]), bg_label=0)[0, 0]
         patches.append(plt.Rectangle((0, 0), 1, 1, fc=color))
-        # Clean up the name (remove "nuclei_" prefix)
         type_name = type_key.replace("nuclei_", "")
-        labels.append(f"{type_name} ({type_id})")
+        labels.append(f"{type_name}")
     
-    # Add legend outside of the plot
+    # Add small, simple legend
     if patches:
-        axes[0, 1].legend(patches, labels, 
-                         loc='center left', bbox_to_anchor=(1, 0.5), 
-                         fontsize='small', frameon=True, title="Nuclei Types")
+        axes[0, 1].legend(patches, labels, loc='best', fontsize='x-small', frameon=False)
 
     # Overlay instance mask on image
     axes[1, 0].imshow(img)
     axes[1, 0].imshow(inst_overlay, alpha=0.5)
-    axes[1, 0].set_title("Instance Mask Overlay")
+    axes[1, 0].set_title("Inst Overlay")
     axes[1, 0].axis("off")
 
     type_overlay = label2rgb(type_mask, bg_label=0, alpha=0.5)
     axes[1, 1].imshow(img)
     axes[1, 1].imshow(type_overlay, alpha=0.5)
-    axes[1, 1].set_title("Type Mask Overlay")
+    axes[1, 1].set_title("Type Overlay")
     
-    # Create legend for tissue types using TISSUE_MAP
+    # Simplified tissue type legend
     tissue_reverse_map = {v: k for k, v in TISSUE_MAP.items()}
-    
-    # Show all available tissue types in the legend
     patches = []
     labels = []
-    
-    # Add entries for all possible tissue types
-    for type_id, type_key in sorted(tissue_reverse_map.items()):
+    for type_id in sorted(tissue_reverse_map.keys())[:5]:  # Limit to first 5 types
+        type_key = tissue_reverse_map[type_id]
         color = label2rgb(np.array([[type_id]]), bg_label=0)[0, 0]
         patches.append(plt.Rectangle((0, 0), 1, 1, fc=color))
-        # Clean up the name (remove "tissue_" prefix)
         type_name = type_key.replace("tissue_", "")
-        labels.append(f"{type_name} ({type_id})")
+        labels.append(f"{type_name}")
     
-    # Add legend outside of the plot
+    # Add small, simple legend
     if patches:
-        axes[1, 1].legend(patches, labels, 
-                            loc='center left', bbox_to_anchor=(1, 0.5), 
-                            fontsize='small', frameon=True, title="Tissue Types")
+        axes[1, 1].legend(patches, labels, loc='best', fontsize='x-small', frameon=False)
 
     axes[1, 1].axis("off")
 
-    # Save figure
-    figure.tight_layout()
-    figure.savefig(os.path.join(vis_dir, f"{basename}_visualization.png"), dpi=200)
+    # Save figure with lower DPI and without tight_layout
+    figure.savefig(os.path.join(vis_dir, f"{basename}_vis.png"), dpi=100, bbox_inches='tight')
     plt.close(figure)
 
 
@@ -499,7 +488,14 @@ def main():
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
 
-    plt.rcParams.update({"figure.max_open_warning": 0})
+    # Use Agg backend for faster non-interactive rendering
+    import matplotlib
+    matplotlib.use('Agg')
+    # Disable figure max open warning and set autolayout to False for speed
+    plt.rcParams.update({
+        "figure.max_open_warning": 0,
+        "figure.autolayout": False
+    })
 
     # Process all TIFF images
     image_files = glob.glob(os.path.join(args.images, "*.tif")) + glob.glob(
