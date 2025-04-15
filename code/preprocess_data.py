@@ -32,7 +32,7 @@ import multiprocessing
 import matplotlib
 from matplotlib import colormaps
 
-COLOR_MAP = [(0.0, 0.0, 0.0), *colormaps["tab20"].colors[::2]]
+COLOR_MAP = [(0.0, 0.0, 0.0), *colormaps["gist_rainbow"](np.linspace(0, 1, 12))]
 
 OUTPUT_SHAPE = [270, 270]
 
@@ -50,8 +50,6 @@ NUCLEI_MAP = {
     "nuclei_apoptosis": 10,
 }
 
-print("color map:", COLOR_MAP)
-
 NUCLEI_COLOR_MAP = {
     i: [
         int(COLOR_MAP[i][0] * 255),
@@ -61,7 +59,6 @@ NUCLEI_COLOR_MAP = {
     for i in range(len(NUCLEI_MAP))
 }
 
-print(f"NUCLEI_MAP: {NUCLEI_COLOR_MAP}")
 
 # Create tissue type mapping
 TISSUE_MAP = {
@@ -83,8 +80,6 @@ TISSUE_COLOR_MAP = {
     ]
     for i in range(len(TISSUE_MAP))
 }
-
-print(f"TISSUE_MAP: {TISSUE_COLOR_MAP}")
 
 
 RGB_LAYERS = [0, 1, 2]
