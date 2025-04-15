@@ -29,24 +29,43 @@ import matplotlib.pyplot as plt
 from skimage.color import label2rgb
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
+import matplotlib
+from matplotlib import colormaps
+
+COLOR_MAP = [(0.0, 0.0, 0.0), *colormaps["tab20"].colors[::2]]
 
 OUTPUT_SHAPE = [270, 270]
 
 NUCLEI_MAP = {
+    "background": 0,
     "nuclei_tumor": 1,
-    "nuclei_lymphocyte": 2,
-    "nuclei_plasma_cell": 3,
+    "nuclei_stroma": 2,
+    "nuclei_epithelium": 3,
     "nuclei_histiocyte": 4,
     "nuclei_melanophage": 5,
     "nuclei_neutrophil": 6,
-    "nuclei_stroma": 7,
-    "nuclei_epithelium": 8,
+    "nuclei_lymphocyte": 7,
+    "nuclei_plasma_cell": 8,
     "nuclei_endothelium": 9,
     "nuclei_apoptosis": 10,
 }
 
+print("color map:", COLOR_MAP)
+
+NUCLEI_COLOR_MAP = {
+    i: [
+        int(COLOR_MAP[i][0] * 255),
+        int(COLOR_MAP[i][1] * 255),
+        int(COLOR_MAP[i][2] * 255),
+    ]
+    for i in range(len(NUCLEI_MAP))
+}
+
+print(f"NUCLEI_MAP: {NUCLEI_COLOR_MAP}")
+
 # Create tissue type mapping
 TISSUE_MAP = {
+    "background": 0,
     "tissue_tumor": 1,
     "tissue_stroma": 2,
     "tissue_epithelium": 3,
@@ -55,6 +74,22 @@ TISSUE_MAP = {
     "tissue_epidermis": 6,
     "tissue_white_background": 7,
 }
+
+TISSUE_COLOR_MAP = {
+    i: [
+        int(COLOR_MAP[i][0] * 255),
+        int(COLOR_MAP[i][1] * 255),
+        int(COLOR_MAP[i][2] * 255),
+    ]
+    for i in range(len(TISSUE_MAP))
+}
+
+print(f"TISSUE_MAP: {TISSUE_COLOR_MAP}")
+
+
+RGB_LAYERS = [0, 1, 2]
+TISSUE_LAYER = 3
+NUCLEI_LAYER = 4
 
 
 class GeometryPolygon(BaseModel):
@@ -211,10 +246,10 @@ def create_type_mapping(nuclei_dir, type_key="classification"):
     return type_mapping, type_info
 
 
-def geojson_to_masks(
+def geojson_to_mask(
     geojson_path: Path,
     image_shape: Tuple[int, int, int],
-    type_mapping: dict[str, int],
+    mapping: dict[str, int],
 ):
     """Convert GeoJSON annotations to instance and type masks.
 
@@ -231,24 +266,20 @@ def geojson_to_masks(
     """
 
     # For nuclei: instance and type masks
-    inst_mask = np.zeros(image_shape[:2], dtype=np.int32)
-    type_mask = np.zeros(image_shape[:2], dtype=np.int32) if type_mapping else None
+    mask = np.zeros(image_shape[:2], dtype=np.int8)
 
     # Load GeoJSON with Pydantic validation
     data = load_geojson(geojson_path)
-    if data is None:
-        return inst_mask, type_mask
 
     # Process each annotation
-    for i, feature in enumerate(data.features, 1):  # Start from 1, 0 is background
+    for i, feature in enumerate(data.features):  # Start from 1, 0 is background
         # Handle different geometry types
         if feature.geometry.type == "Polygon":
             polygons = [feature.geometry.coordinates[0]]
         elif feature.geometry.type == "MultiPolygon":
             polygons = [poly[0] for poly in feature.geometry.coordinates]
         else:
-            print(f"Unsupported geometry type: {feature.geometry.type}, skipping")
-            continue
+            raise ValueError(f"Unsupported geometry type: {feature.geometry.type}")
 
         # Process each polygon
         for polygon_coords in polygons:
@@ -260,22 +291,85 @@ def geojson_to_masks(
                 print(f"Malformed polygon in feature {i}, skipping: {points.shape}")
                 continue
 
-            # Create instance mask
-            cv2.fillPoly(inst_mask, [points], i)
-
             # Try to get classification info using the provided key
-            type_name = feature.properties.classification.name
-            type_int = type_mapping.get(type_name)
-            if type_int:
-                cv2.fillPoly(type_mask, [points], type_int)
-            else:
-                print(f"Type {type_name} not found in mapping, skipping")
-                continue
+            type_int = mapping[feature.properties.classification.name]
 
-    return type_mask
+            cv2.fillPoly(mask, [points], type_int)
+
+    return mask
 
 
-def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
+def plot_overlay(image, mask, axe, color_map, mapping):
+    """Plot overlay of the mask on the image."""
+
+    # Normalize image to 0-1 range
+    if image.dtype == np.uint8:
+        img_normalized = image.astype(float) / 255.0
+    else:
+        img_normalized = (image - image.min()) / (image.max() - image.min() + 1e-8)
+        img_normalized = np.clip(img_normalized, 0, 1)
+
+    # Create color array for the mask
+    mask_colors = np.zeros((*mask.shape, 3), dtype=float)
+
+    # Apply colors based on the mask values
+    for label, color in color_map.items():
+        mask_region = mask == label
+        if np.any(mask_region):
+            for c in range(3):
+                mask_colors[:, :, c][mask_region] = color[c] / 255.0
+
+    # Create the overlay by blending
+    alpha = 0.5
+    overlay = np.zeros_like(img_normalized)
+
+    # Only apply color where mask is not background (0)
+    foreground = mask > 0
+
+    for c in range(3):
+        overlay[:, :, c] = img_normalized[:, :, c].copy()
+        overlay[:, :, c][foreground] = (
+            alpha * mask_colors[:, :, c][foreground]
+            + (1 - alpha) * img_normalized[:, :, c][foreground]
+        )
+
+    # Display the overlay
+    axe.imshow(overlay)
+    axe.axis("off")
+
+    # Create legend elements
+    patches = []
+    labels = []
+
+    for label_id, color in color_map.items():
+        if label_id == 0:  # Skip background
+            continue
+
+        # Get type name from mapping
+        type_name = None
+        for name, idx in mapping.items():
+            if idx == label_id:
+                type_name = name
+                break
+
+        if type_name:
+            normalized_color = [c / 255.0 for c in color]
+            patches.append(plt.Rectangle((0, 0), 1, 1, fc=normalized_color))
+            labels.append(type_name)
+
+    # Add legend if we have items
+    if patches:
+        axe.legend(
+            patches,
+            labels,
+            loc="best",
+            fontsize="x-small",
+            framealpha=0.7,
+            ncol=2 if len(patches) > 5 else 1,
+        )
+
+
+def visualize_masks(img, tissue_mask, nuclei_mask, basename, output_dir):
     """Generate visualization of the masks for verification."""
 
     if img.shape[2] > 3:
@@ -283,73 +377,24 @@ def visualize_masks(img, inst_mask, type_mask, basename, output_dir):
         return
 
     # Create visualization directory
-    vis_dir = os.path.join(output_dir, "visualizations")
-    os.makedirs(vis_dir, exist_ok=True)
-
-    # 1. Instance mask visualization (random colors)
-    inst_overlay = label2rgb(inst_mask, bg_label=0, alpha=0.5)
+    vis_dir = output_dir / "visualizations"
+    vis_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a smaller figure with lower DPI for faster rendering
-    figure, axes = plt.subplots(2, 2, figsize=(10, 8), dpi=100)
+    figure, axes = plt.subplots(1, 3, figsize=(12, 4), dpi=100)
 
-    # Original image
-    axes[0, 0].imshow(img)
-    axes[0, 0].set_title(f"Original Image")
-    axes[0, 0].axis("off")
+    axes[0].imshow(img)
+    axes[0].axis("off")
+    axes[0].set_title(f"Original image ({img.shape[0]}x{img.shape[1]})")
 
-    # Instance mask only
-    axes[0, 1].imshow(inst_overlay)
-    axes[0, 1].set_title("Instance Mask")
-    axes[0, 1].axis("off")
+    plot_overlay(img, tissue_mask, axes[1], TISSUE_COLOR_MAP, TISSUE_MAP)
+    axes[1].set_title("Tissue overlay")
 
-    # Create legend for nuclei types using NUCLEI_MAP
-    # Reverse the map to get from ID to name
-    nuclei_reverse_map = {v: k for k, v in NUCLEI_MAP.items()}
-    
-    # Add minimal legend entries - only add the most important types
-    patches = []
-    labels = []
-    for type_id in sorted(nuclei_reverse_map.keys())[:5]:  # Limit to first 5 types
-        type_key = nuclei_reverse_map[type_id]
-        color = label2rgb(np.array([[type_id]]), bg_label=0)[0, 0]
-        patches.append(plt.Rectangle((0, 0), 1, 1, fc=color))
-        type_name = type_key.replace("nuclei_", "")
-        labels.append(f"{type_name}")
-    
-    # Add small, simple legend
-    if patches:
-        axes[0, 1].legend(patches, labels, loc='best', fontsize='x-small', frameon=False)
-
-    # Overlay instance mask on image
-    axes[1, 0].imshow(img)
-    axes[1, 0].imshow(inst_overlay, alpha=0.5)
-    axes[1, 0].set_title("Inst Overlay")
-    axes[1, 0].axis("off")
-
-    type_overlay = label2rgb(type_mask, bg_label=0, alpha=0.5)
-    axes[1, 1].imshow(img)
-    axes[1, 1].imshow(type_overlay, alpha=0.5)
-    axes[1, 1].set_title("Type Overlay")
-    
-    # Simplified tissue type legend
-    tissue_reverse_map = {v: k for k, v in TISSUE_MAP.items()}
-    patches = []
-    labels = []
-    for type_id in sorted(tissue_reverse_map.keys())[:5]:  # Limit to first 5 types
-        type_key = tissue_reverse_map[type_id]
-        color = label2rgb(np.array([[type_id]]), bg_label=0)[0, 0]
-        patches.append(plt.Rectangle((0, 0), 1, 1, fc=color))
-        type_name = type_key.replace("tissue_", "")
-        labels.append(f"{type_name}")
-    
-    # Add small, simple legend
-    if patches:
-        axes[1, 1].legend(patches, labels, loc='best', fontsize='x-small', frameon=False)
-
-    axes[1, 1].axis("off")
+    plot_overlay(img, nuclei_mask, axes[2], NUCLEI_COLOR_MAP, NUCLEI_MAP)
+    axes[2].set_title("Nuclei overlay")
 
     # Save figure with lower DPI and without tight_layout
-    figure.savefig(os.path.join(vis_dir, f"{basename}_vis.png"), dpi=100, bbox_inches='tight')
+    figure.savefig(vis_dir / f"{basename}_vis.png", dpi=100, bbox_inches="tight")
     plt.close(figure)
 
 
@@ -411,14 +456,14 @@ def process_image(
 
     # Use the global NUCLEI_MAP instead of the passed type_mapping
     # Convert nuclei GeoJSON to masks
-    nuclei_mask = geojson_to_masks(nuclei_geojson_path, img.shape, NUCLEI_MAP)
+    nuclei_mask = geojson_to_mask(nuclei_geojson_path, img.shape, NUCLEI_MAP)
 
     # Process tissue annotations (now required)
     tissue_geojson_path = tissues_dir / f"{basename}_tissue.geojson"
 
     # Use the global TISSUE_MAP instead of creating a new mapping
     # Convert tissue GeoJSON to semantic segmentation mask
-    tissue_mask = geojson_to_masks(
+    tissue_mask = geojson_to_mask(
         tissue_geojson_path,
         img.shape,
         TISSUE_MAP,
@@ -430,16 +475,14 @@ def process_image(
     tissue_mask_patches = extract_patches(tissue_mask, OUTPUT_SHAPE)
 
     # Process and save each patch
-    for i, ((img_patch, coords), (nuclei_patch, _), (tissue_patch, _)) in enumerate(
+    for i, ((img_patch, (x, y)), (nuclei_patch, _), (tissue_patch, _)) in enumerate(
         zip(img_patches, nuclei_mask_patches, tissue_mask_patches)
     ):
-        y, x = coords
-
         # [RGB, inst, type] format for classification
         output = np.zeros((OUTPUT_SHAPE[0], OUTPUT_SHAPE[1], 5), dtype=np.uint8)
-        output[:, :, :3] = img_patch
-        output[:, :, 3] = nuclei_patch
-        output[:, :, 4] = tissue_patch
+        output[:, :, RGB_LAYERS] = img_patch
+        output[:, :, NUCLEI_LAYER] = nuclei_patch
+        output[:, :, TISSUE_LAYER] = tissue_patch
 
         # Save as numpy array
         patch_output_path = os.path.join(output_dir, f"{basename}_y{y}_x{x}.npy")
@@ -450,12 +493,11 @@ def process_file(npy_file, output_dir):
     data = np.load(npy_file)
     basename = os.path.basename(npy_file).split(".")[0]
 
-    img = data[:, :, :3]
-    inst_mask = data[:, :, 3]
+    img = data[:, :, RGB_LAYERS]
+    tissue_mask = data[:, :, TISSUE_LAYER]
+    nuclei_mask = data[:, :, NUCLEI_LAYER]
 
-    type_mask = data[:, :, 4] if data.shape[2] > 4 else None
-
-    visualize_masks(img, inst_mask, type_mask, basename, output_dir)
+    visualize_masks(img, tissue_mask, nuclei_mask, basename, output_dir)
 
 
 def visualize_processed_data(output_dir, nuclei_dir, max_threads=None):
@@ -489,13 +531,10 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     # Use Agg backend for faster non-interactive rendering
-    import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     # Disable figure max open warning and set autolayout to False for speed
-    plt.rcParams.update({
-        "figure.max_open_warning": 0,
-        "figure.autolayout": False
-    })
+    plt.rcParams.update({"figure.max_open_warning": 0, "figure.autolayout": False})
 
     # Process all TIFF images
     image_files = glob.glob(os.path.join(args.images, "*.tif")) + glob.glob(
