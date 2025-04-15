@@ -86,6 +86,10 @@ RGB_LAYERS = [0, 1, 2]
 TISSUE_LAYER = 3
 NUCLEI_LAYER = 4
 
+TRAIN_TEST_SPLIT = 0.8
+
+RANDOM_SEED = 42
+
 
 class GeometryPolygon(BaseModel):
     """GeoJSON Polygon geometry."""
@@ -358,9 +362,9 @@ def plot_overlay(image, mask, axe, color_map, mapping):
         axe.legend(
             patches,
             labels,
-            loc='upper center', 
+            loc="upper center",
             bbox_to_anchor=(0.5, -0.15),
-            fontsize='x-small',
+            fontsize="x-small",
             framealpha=0.7,
             ncol=2 if len(patches) > 5 else 1,
         )
@@ -497,6 +501,55 @@ def process_file(npy_file, output_dir):
     visualize_masks(img, tissue_mask, nuclei_mask, basename, output_dir)
 
 
+def split_train_test(output_dir, train_ratio=TRAIN_TEST_SPLIT):
+    """Split processed data into train and test sets.
+    
+    Args:
+        output_dir: Directory containing processed data
+        train_ratio: Ratio of data to use for training (default: 0.8)
+    """
+    # Get all numpy files
+    npy_files = glob.glob(os.path.join(output_dir, "*.npy"))
+    
+    if not npy_files:
+        print(f"No processed data found in {output_dir}")
+        return
+
+    # Shuffle files to ensure random split
+    np.random.shuffle(npy_files)
+    
+    # Calculate split index
+    split_idx = int(len(npy_files) * train_ratio)
+    
+    # Split into train and test sets
+    train_files = npy_files[:split_idx]
+    test_files = npy_files[split_idx:]
+    
+    # Create train and test directories
+    train_dir = os.path.join(output_dir, "train")
+    test_dir = os.path.join(output_dir, "test")
+    
+    os.makedirs(train_dir, exist_ok=True)
+    os.makedirs(test_dir, exist_ok=True)
+    
+    print(f"Moving {len(train_files)} files to train set...")
+    for file in tqdm(train_files, desc="Moving to train set"):
+        basename = os.path.basename(file)
+        dst = os.path.join(train_dir, basename)
+        # Move instead of copy
+        os.rename(file, dst)
+    
+    print(f"Moving {len(test_files)} files to test set...")
+    for file in tqdm(test_files, desc="Moving to test set"):
+        basename = os.path.basename(file)
+        dst = os.path.join(test_dir, basename)
+        # Move instead of copy
+        os.rename(file, dst)
+    
+    print(f"Data split complete: {len(train_files)} training samples, {len(test_files)} test samples")
+    return len(train_files), len(test_files)
+
+
 def visualize_processed_data(output_dir, nuclei_dir, max_threads=None):
     """Generate visualizations for already processed data."""
     vis_dir = os.path.join(output_dir, "visualizations")
@@ -527,8 +580,9 @@ def main():
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
 
-    # Use Agg backend for faster non-interactive rendering
+    np.random.seed(RANDOM_SEED)
 
+    # Use Agg backend for faster non-interactive rendering
     matplotlib.use("Agg")
     # Disable figure max open warning and set autolayout to False for speed
     plt.rcParams.update({"figure.max_open_warning": 0, "figure.autolayout": False})
@@ -556,8 +610,11 @@ def main():
         for future in tqdm(
             as_completed(futures), total=len(futures), desc="Processing images"
         ):
-            if future.result():
+            try:
+                future.result()
                 success_count += 1
+            except Exception as e:
+                print(f"Error processing {futures[future]}: {str(e)}")
 
     print(f"Processed {success_count}/{len(image_files)} images successfully")
     print(f"Output saved to {args.output}")
@@ -568,7 +625,14 @@ def main():
         visualize_processed_data(args.output, args.nucleis, args.max_threads)
         print(f"Visualizations saved to {os.path.join(args.output, 'visualizations')}")
 
-    print("Next step: Use extract_patches.py to create training patches")
+    # Split data into train and test sets
+    train_count, test_count = split_train_test(args.output)
+    
+    print(f"Data split complete: {train_count} training samples, {test_count} test samples")
+    print(f"Train data saved to {os.path.join(args.output, 'train')}")
+    print(f"Test data saved to {os.path.join(args.output, 'test')}")
+    
+    print("Preprocessing complete!")
 
 
 if __name__ == "__main__":
