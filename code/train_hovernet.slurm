@@ -2,14 +2,17 @@
 #SBATCH -p mesonet 
 #SBATCH -N 1
 #SBATCH -c 56
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 #SBATCH --time=24:00:00
 #SBATCH --mem=64G
 #SBATCH --account=m25031
 
 # Changer le répertoire de travail
-cd ../hover_net
+source ../hover_net/.venv/bin/activate
+
+# Fix error
+export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 # Lancer l’entraînement
 # L'argument --config est un exemple, adaptez-le en fonction de la manière dont vous configurez vos paramètres d'entraînement
-uv run ./run_train.py --gpu=0,1,2,3
+python3 ../hover_net/run_train.py --gpu=0,1
