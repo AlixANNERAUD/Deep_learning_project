@@ -1,4 +1,3 @@
-\
 import os
 import json
 import csv
@@ -140,6 +139,24 @@ def write_label_csv(labels_data, csv_path):
     except IOError as e:
         logging.error(f"Failed to write CSV file {csv_path}: {e}")
 
+def write_label_npy(labels_data, npy_path):
+    """Writes the extracted nuclei data to a .npy file."""
+    try:
+        if not labels_data:
+            # Create an empty array with the correct shape (0, 3)
+            nuclei_array = np.empty((0, 3), dtype=np.int64)
+        else:
+            # Convert list of dicts to a NumPy array
+            nuclei_array = np.array([[d['x'], d['y'], d['label']] for d in labels_data], dtype=np.int64)
+        np.save(npy_path, nuclei_array)
+    except IOError as e:
+        logging.error(f"Failed to write NPY file {npy_path}: {e}")
+    except ImportError:
+        logging.error("Library 'numpy' is required. pip install numpy")
+        raise
+    except Exception as e:
+        logging.error(f"An unexpected error occurred writing NPY file {npy_path}: {e}")
+
 def write_split_file(basenames, file_path):
     """Writes a list of image basenames to a CSV file (for train/val splits)."""
     try:
@@ -245,6 +262,7 @@ def main(source_dir, output_dir):
 
             png_path = output_img_dir / f"{basename}.png"
             csv_path = output_lbl_dir / f"{basename}.csv"
+            npy_path = output_lbl_dir / f"{basename}.npy" # Path for the .npy file
             geojson_path = get_geojson_path(tif_path, geojson_nuclei_dir)
 
             # Convert image first
@@ -252,12 +270,20 @@ def main(source_dir, output_dir):
 
             # Process annotations
             if geojson_path.exists():
-                 current_next_id = next_label_id_counter if update_label_map else list(next_label_id_counter) # Pass copy if not updating
-                 nuclei_data, next_label_id_counter = extract_nuclei_data(geojson_path, label_str_to_int, current_next_id)
+                 # Use a copy of the counter if not updating the main map (e.g., for validation/test)
+                 current_label_map = label_str_to_int
+                 current_next_id = next_label_id_counter if update_label_map else list(next_label_id_counter)
+
+                 nuclei_data, updated_next_id_counter = extract_nuclei_data(geojson_path, current_label_map, current_next_id)
+                 if update_label_map:
+                     next_label_id_counter = updated_next_id_counter # Update the main counter only for train set
+
                  write_label_csv(nuclei_data, csv_path)
+                 write_label_npy(nuclei_data, npy_path) # Write the .npy file
             else:
-                 logging.warning(f"GeoJSON not found for {tif_path.name}, creating empty label file.")
+                 logging.warning(f"GeoJSON not found for {tif_path.name, creating empty label files.")
                  write_label_csv([], csv_path) # Create empty CSV
+                 write_label_npy([], npy_path) # Create empty NPY
 
     # --- Final Steps ---
     # Write split files
@@ -283,7 +309,7 @@ def main(source_dir, output_dir):
 
 if __name__ == "__main__":
     print("--- CellViT Dataset Preparation Script ---")
-    print("Note: This script requires libraries like Pillow, tifffile, shapely, PyYAML, scikit-learn, numpy.")
+    print("Note: This script requires libraries like Pillow, tifffile, shapely, PyYAML, scikit-learn, numpy.") # Added numpy here
     print("Please ensure they are installed in your environment (e.g., `pip install Pillow tifffile shapely PyYAML scikit-learn numpy`).\n")
 
     parser = argparse.ArgumentParser(description="Prepare dataset for CellViT detection format.")
