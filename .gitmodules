@@ -1,3 +1,6 @@
 [submodule "code/hover_net"]
 	path = hover_net
 	url = https://github.com/AlixANNERAUD/hover_net.git
+[submodule "CellViT-plus-plus"]
+	path = cellvit_plus_plus/CellViT-plus-plus
+	url = https://github.com/TIO-IKIM/CellViT-plus-plus.git
