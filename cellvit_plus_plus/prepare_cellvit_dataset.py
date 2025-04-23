@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- Configuration ---
 # These can be overridden by command-line arguments
 DEFAULT_SOURCE_DATASET_DIR = Path("../dataset")
-DEFAULT_OUTPUT_DIR = Path("../dataset/cellvit_dataset") # New directory for formatted data
+DEFAULT_OUTPUT_DIR = Path("../dataset/cellvit_plus_plus") # New directory for formatted data
 
 # Split ratios
 TRAIN_RATIO = 0.8
