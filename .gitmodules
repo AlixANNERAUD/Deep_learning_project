@@ -4,3 +4,6 @@
 [submodule "CellViT-plus-plus"]
 	path = cellvit_plus_plus/CellViT-plus-plus
 	url = https://github.com/TIO-IKIM/CellViT-plus-plus.git
+[submodule "nnunet/nnUNet"]
+	path = nnunet/nnUNet
+	url = https://github.com/MIC-DKFZ/nnUNet.git
