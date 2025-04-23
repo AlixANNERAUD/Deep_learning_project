@@ -4,9 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "nnunetv2",
-]
+dependencies = ["nnunetv2"]
 
 [tool.uv.sources]
-nnunetv2 = { path = "nnUNet" }
+nnunetv2 = { path = "nnUNet", editable = true }

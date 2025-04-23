@@ -954,12 +954,12 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "nnunetv2", directory = "nnUNet" }]
+requires-dist = [{ name = "nnunetv2", editable = "nnUNet" }]
 
 [[package]]
 name = "nnunetv2"
 version = "2.6.0"
-source = { directory = "nnUNet" }
+source = { editable = "nnUNet" }
 dependencies = [
     { name = "acvl-utils" },
     { name = "batchgenerators" },
