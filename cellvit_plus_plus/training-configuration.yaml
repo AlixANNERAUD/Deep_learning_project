@@ -1,0 +1,74 @@
+logging:
+    mode: online
+    project: puma
+    notes: CellViT-SAM-H
+    log_comment: CellViT-SAM-H
+    tags:
+        - Classifier
+        - puma
+        - Baseline
+    wandb_dir: /home/queberal/Deep_learning_project/cellvit_plus_plus/model-logs/wandb
+    log_dir: /home/queberal/Deep_learning_project/cellvit_plus_plus/model-logs/track-2/
+    level: Info
+
+random_seed: 19
+gpu: 0
+
+data:
+    dataset: SegmentationDataset
+    dataset_path: /home/queberal/Deep_learning_project/cellvit_plus_plus/cellvit_data
+    normalize_stains_train: false
+    normalize_stains_val: false
+    input_shape:
+        - 1024
+        - 1024
+    num_classes: 10
+    train_filelist: /home/queberal/Deep_learning_project/cellvit_plus_plus/cellvit_data/splits/fold_0/train.csv
+    val_filelist: /home/queberal/Deep_learning_project/cellvit_plus_plus/cellvit_data/splits/fold_0/val.csv
+    label_map:
+        1: nuclei_tumor
+        2: nuclei_stroma
+        3: nuclei_lymphocyte
+        4: nuclei_melanophage
+        5: nuclei_apoptosis
+        6: nuclei_endothelium
+        7: nuclei_epithelium
+        8: nuclei_histiocyte
+        9: nuclei_neutrophil
+        10: nuclei_plasma_cell
+
+cellvit_path: /home/queberal/Deep_learning_project/cellvit_plus_plus/checkpoints/CellViT-SAM-H-x40-AMP.pth
+
+training:
+    cache_cell_dataset: true
+    batch_size: 256
+    epochs: 50
+    drop_rate: 0.1
+    optimizer: AdamW
+    optimizer_hyperparameter:
+        betas:
+            - 0.85
+            - 0.9
+        lr: 0.00019395764571288664
+        weight_decay: 0.0007665004192592943
+    early_stopping_patience: 20
+    mixed_precision: true
+    eval_every: 1
+    weighted_sampling: true
+    scheduler:
+        scheduler_type: exponential
+    weight_list:
+        - 2
+        - 5
+        - 1.5
+        - 1
+        - 1.5
+        - 5
+        - 3
+        - 3
+        - 5
+        - 1
+
+just_load_model: false
+model:
+    hidden_dim: 512

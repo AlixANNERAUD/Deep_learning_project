@@ -8,9 +8,9 @@
 #SBATCH --nodes=1                   # Nombre de nœuds requis (1 est suffisant pour ce script)
 #SBATCH --ntasks-per-node=1         # Nombre de tâches (processus) par nœud (1 script python)
 #SBATCH --cpus-per-task=8           # Nombre de cœurs CPU par tâche (ajustable)
-#SBATCH --gres=gpu:a100:1           # Nombre et type de GPUs requis (1 A100)
+#SBATCH --gres=gpu:1                # Nombre et type de GPUs requis (1 GPU générique)
 #SBATCH --mem=64G                   # Mémoire RAM requise par nœud (ex: 64 Go, ajustable)
-#SBATCH --time=12:00:00             # Temps maximum d'exécution (HH:MM:SS, max 10 jours)
+#SBATCH --time=10:00:00             # Temps maximum d'exécution (HH:MM:SS, max 10 jours)
 
 # ----- Configuration de l'environnement -----
 echo "Date: $(date)"
@@ -21,25 +21,41 @@ echo "Compte: $SLURM_JOB_ACCOUNT"
 echo "GPUs alloués: $CUDA_VISIBLE_DEVICES"
 
 # Charger les modules nécessaires (À VÉRIFIER/ADAPTER selon la configuration de Juliet)
-module purge # Commencer avec un environnement propre
+# module purge # Commencer avec un environnement propre
 # module load cuda/XXX # Charger la version CUDA appropriée si nécessaire
 # module load cudnn/YYY # Charger cuDNN si nécessaire
 # module load anaconda/ZZZ # Charger Anaconda/Miniconda si nécessaire
 
-# Activer l'environnement Conda (si vous en utilisez un)
-# Assurez-vous que 'conda' est dans votre PATH ou chargez le module approprié
-# Le chemin peut varier, vérifiez avec 'which conda' ou 'conda info --base'
-CONDA_BASE=$(conda info --base)
-source ${CONDA_BASE}/etc/profile.d/conda.sh
-conda activate cellvit_env # Remplacer par le nom exact de votre environnement
+# Activer l'environnement virtuel uv (si vous en utilisez un)
+# Assurez-vous que le répertoire .venv existe et contient l'environnement
+VENV_PATH="/home/queberal/Deep_learning_project/cellvit_plus_plus/.venv" # Ajustez si nécessaire
+if [ -d "${VENV_PATH}" ] && [ -f "${VENV_PATH}/bin/activate" ]; then
+    echo "Activation de l'environnement uv: ${VENV_PATH}"
+    source ${VENV_PATH}/bin/activate
+    
+    # Vérifier la version CUDA disponible
+    echo "Vérification de la version CUDA avec nvidia-smi..."
+    nvidia-smi
+    
+    # Installer cupy (adapter la version cuda si nécessaire, ex: cupy-cuda11x, cupy-cuda12x)
+    echo "Installation de cupy pour CUDA 12.x..."
+    uv pip install cupy-cuda12x
+    if [ $? -ne 0 ]; then
+        echo "Erreur lors de l'installation de cupy. Vérifiez la version CUDA du cluster."
+        exit 1
+    fi
+else
+    echo "Erreur: Environnement uv non trouvé à ${VENV_PATH}"
+    exit 1
+fi
 
 # ----- Exécution du script d'entraînement -----
 echo "Lancement de l'entraînement CellViT++..."
 
 # Chemin absolu vers le script et le fichier de configuration
 # !! ASSUREZ-VOUS QUE CES CHEMINS SONT CORRECTS SUR JULIET !!
-SCRIPT_PATH="/chemin/absolu/vers/cellvit_plus_plus/CellViT-plus-plus/cellvit/train_cell_classifier_head.py"
-CONFIG_PATH="/chemin/absolu/vers/votre/training_config.yaml" # <-- !! REMPLACEZ CECI !!
+SCRIPT_PATH="/home/queberal/Deep_learning_project/cellvit_plus_plus/CellViT-plus-plus/cellvit/train_cell_classifier_head.py"
+CONFIG_PATH="/home/queberal/Deep_learning_project/cellvit_plus_plus/training-configuration.yaml"
 
 # Vérifier si les fichiers existent
 if [ ! -f "${SCRIPT_PATH}" ]; then
@@ -63,7 +79,6 @@ else
 fi
 
 # ----- Fin -----
-conda deactivate
 echo "Fin du script Slurm."
 echo "Date: $(date)"
 
