@@ -10,7 +10,8 @@
 #SBATCH --cpus-per-task=8           # Nombre de cœurs CPU par tâche (ajustable)
 #SBATCH --mem=64G                   # Mémoire RAM requise par nœud (ajustable)
 #SBATCH --time=24:00:00             # Temps maximum d'exécution (HH:MM:SS, ajustable pour training)
-#SBATCH --gres=gpu:1                # Nombre de GPUs requis (ajustable)
+#SBATCH --gres=gpu:4                # Nombre de GPUs requis (ajustable)
+#SBATCH --nodelist=juliet2
 
 # ----- Configuration de l'environnement ----
 echo "Date: $(date)"
