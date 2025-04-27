@@ -7,12 +7,15 @@ name = "nnunet-project"
 version = "0.1.0"
 description = "nnU-Net segmentation project"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.20.0",
     "pillow>=9.0.0",
     "geojson>=2.5.0",
     "argparse>=1.4.0",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+    "nnunetv2",
 ]
 
 [tool.setuptools]
@@ -22,4 +25,4 @@ packages = ["nnUNet"]
 prepare_dataset_for_nnunet = "nnunet.prepare_dataset_for_nnunet:main"
 
 [tool.uv.sources]
-nnunetv2 = { path = "nnUNet", editable = true }
+nnunetv2 = { path = "nnUNet" }
