@@ -177,3 +177,6 @@ dataset/
 code/processed_data
 
 weights/
+
+nnUNet_raw/*
+settings.json
