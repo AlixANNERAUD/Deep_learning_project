@@ -4,9 +4,6 @@
 [submodule "nnunet/nnUNet"]
 	path = nnunet/nnUNet
 	url = https://github.com/MIC-DKFZ/nnUNet.git
-[submodule "hovernet/hovernet"]
-	path = hovernet/hovernet
-	url = https://github.com/vqdang/hover_net.git
 [submodule "hover_net"]
 	path = hovernet/hover_net
 	url = https://github.com/AlixANNERAUD/hover_net.git
