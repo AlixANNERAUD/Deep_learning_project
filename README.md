@@ -55,10 +55,9 @@ Le projet est organisé en plusieurs modules principaux:
 
 #### Scripts principaux:
 
--   `code/preprocess_data.py` : Prétraitement des données pour HoVer-Net
--   `code/train_hovernet.slurm` : Script SLURM pour l'entraînement du modèle
--   `run_infer.py` : Script pour l'inférence avec le modèle entraîné
--   `run_train.py` : Script pour lancer l'entraînement
+-   `preprocess_data_hovernet.py` : Script de prétraitement des données pour HoVer-Net
+-   `train_hovernet.slurm` : Script SLURM pour l'entraînement du modèle
+-   Les scripts originaux du framework se trouvent dans le dossier `hovernet/hover_net/`
 
 ### 4. Diaporama et Visualisation
 
@@ -105,8 +104,12 @@ sbatch train_cellvit_classifier.slurm
 
 ```bash
 # Prétraitement des données
-cd code
-python preprocess_data.py
+cd hovernet
+python preprocess_data_hovernet.py --images ../dataset/01_training_dataset_tif_ROIs \
+                                  --nucleis ../dataset/01_training_dataset_geojson_nuclei \
+                                  --tissues ../dataset/01_training_dataset_geojson_tissue \
+                                  --output processed_data \
+                                  --visualize
 
 # Lancer l'entraînement avec SLURM
 sbatch train_hovernet.slurm
@@ -129,9 +132,9 @@ Les fichiers `uv.lock` dans chaque sous-répertoire spécifient les versions exa
 
 Le projet utilise plusieurs submodules Git:
 
-1. **CellViT-plus-plus**: Implémentation complète de CellViT avec des outils d'annotation et de visualisation
-2. **hover_net**: Implémentation de HoVer-Net pour la segmentation des noyaux cellulaires
-3. **nnUNet**: Framework de segmentation d'images médicales
+1. **CellViT-plus-plus**: Implémentation du framework CellViT intégrée dans notre dossier `cellvit_plus_plus/CellViT-plus-plus/`
+2. **hover_net**: Implémentation de HoVer-Net intégrée dans notre dossier `hovernet/hover_net/`
+3. **nnUNet**: Framework de segmentation intégré dans notre dossier `nnunet/nnUNet/`
 
 Ces submodules sont intégrés au projet principal et peuvent être mis à jour avec:
 
