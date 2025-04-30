@@ -16,9 +16,8 @@ Le projet utilise [uv](https://github.com/astral-sh/uv), un installateur et gest
 
 ```bash
 # Installation générale
-cd backend
-uv lock
-uv sync --extra cpu | apple | cu124
+cd repertoire
+uv sync
 ```
 
 Chaque sous-module dispose également de son propre environnement qui peut être configuré grâce à uv.
