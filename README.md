@@ -1,157 +1,116 @@
-<h1 align="center">Deep Learning Project pour la Segmentation et Classification d'Images Médicales</h1>
+# Deep Learning for Melanoma Histopathology
 
-<p align="center">
-Un projet d'application de techniques de deep learning pour la segmentation et la classification de cellules et tissus dans des images médicales.
-</p>
+**Nuclei classification and tissue segmentation using the PUMA dataset.**
 
-## 📋 Vue d'ensemble du projet
+This repository contains our deep learning project at **INSA Rouen Normandie (2025)**, developed by **Alix ANNERAUD and Quentin Béral**. We explored how existing medical imaging models can be adapted to identify cell nuclei and tissue regions in histopathology images of advanced melanoma.
 
-Ce projet implémente plusieurs modèles de deep learning pour la segmentation et la classification d'images médicales, spécifiquement focalisés sur les données histopathologiques. Il utilise des frameworks de pointe comme nnUNet et CellViT pour traiter efficacement ces tâches.
+The work covers dataset conversion, model training on a GPU cluster, hyperparameter tuning, and analysis of the results. It builds on **CellViT++**, **nnU-Net**, and **HoVer-Net** rather than introducing a new neural network architecture.
 
-Le projet est structuré autour de plusieurs modules qui fonctionnent ensemble pour traiter les données brutes, entraîner les modèles et analyser les résultats.
+![PUMA melanoma histopathology image with annotated regions](diaporama/images/d4b50cb2-a768-446b-abd3-049f6438d1c0.png)
 
-## 🔧 Installation
+*Example from the PUMA dataset and its annotations, as shown in our project presentation.*
 
-Le projet utilise [uv](https://github.com/astral-sh/uv), un installateur et gestionnaire d'environnements Python rapide, pour gérer les dépendances.
+## The problem
 
-```bash
-# Installation générale
-cd repertoire
-uv sync
+The [PUMA challenge](https://puma.grand-challenge.org/) focuses on **panoptic segmentation of nuclei and tissue in melanoma**. It involves two related tasks:
+
+- **Nuclei:** locate individual cell nuclei and identify their type, including tumor cells, lymphocytes, and other cell populations.
+- **Tissue:** segment and classify larger regions, such as tumor, stroma, and other tissue structures.
+
+PUMA provides H&E-stained image regions with expert-reviewed annotations. The dataset includes 1,024 × 1,024-pixel regions of interest, associated context images, and nucleus/tissue annotations in GeoJSON format.
+
+[Dataset and access instructions](https://puma.grand-challenge.org/dataset/) · [PUMA dataset paper](https://doi.org/10.1093/gigascience/giaf011)
+
+## What we implemented
+
+| Approach | Work in this repository | Outcome |
+| --- | --- | --- |
+| **[CellViT++](https://github.com/TIO-IKIM/CellViT-plus-plus)** | Convert PUMA annotations, train a nucleus classification head, and tune hyperparameters with Weights & Biases. | Training and validation results documented below. |
+| **[nnU-Net](https://github.com/MIC-DKFZ/nnUNet)** | Prepare PUMA and NSCLC datasets, customize training, and set up an NSCLC pretraining → PUMA fine-tuning workflow. | Training was blocked by GPU/environment issues; no comparable result is reported. |
+| **[HoVer-Net](https://github.com/vqdang/hover_net)** | Prepare image patches and annotation masks, with a cluster training script. | Experimental integration; no benchmark result is reported here. |
+
+The implementation includes **Python preprocessing scripts**, **GeoJSON-to-mask conversion**, **custom training configurations**, and **SLURM jobs** for the cluster runs.
+
+## Results
+
+Our main completed experiment used **CellViT++ with a CellViT-SAM-H backbone** and a trained classification head. We explored hyperparameters with Weights & Biases and inspected the validation curves.
+
+| Validation metric | Approximate value reported in our presentation |
+| --- | ---: |
+| AUROC | **0.93** |
+| F1 score | **0.77** |
+| Average precision | **0.45** |
+
+![CellViT++ training and validation curves](diaporama/images/best_run.png)
+
+*CellViT++ training and validation curves from the project presentation.*
+
+These are **validation observations from the project**, not independent test-set or PUMA leaderboard results. The nnU-Net experiment did not complete because the training process stalled in the cluster environment, and we did not obtain a directly comparable three-model benchmark.
+
+The experiments also highlighted practical challenges beyond model selection: class imbalance, GPU availability, dependency compatibility, and reproducibility.
+
+## Repository structure
+
+```text
+.
+├── cellvit_plus_plus/   # PUMA conversion, CellViT++ config and classifier training
+├── nnunet/              # PUMA/NSCLC conversion, custom trainers and nnU-Net jobs
+├── hovernet/            # Mask/patch preprocessing and HoVer-Net job
+├── diaporama/           # Project presentation, plots and experiment notebooks
+└── .dvc/                # DVC configuration
 ```
 
-Chaque sous-module dispose également de son propre environnement qui peut être configuré grâce à uv.
+The original model implementations are included as **Git submodules**. The notebooks and plots used for the presentation are in [`diaporama/`](diaporama/).
 
-## 📂 Structure du projet
+## Getting started
 
-Le projet est organisé en plusieurs modules principaux:
+The project uses [uv](https://docs.astral.sh/uv/) for Python environments, with **separate dependencies for each model**. There is no shared root-level Python environment.
 
-### 1. nnUNet
-
-[nnUNet](https://github.com/MIC-DKFZ/nnUNet) est un framework de segmentation d'images médicales auto-configurant. Dans notre projet, il est utilisé pour la segmentation automatique des tissus et des noyaux cellulaires.
-
-#### Scripts principaux:
-
--   `prepare_dataset_puma_nnunet.py` : Prépare les données PUMA pour l'entraînement avec nnUNet
--   `prepare_dataset_nsclc_nnunet.py` : Prépare les données NSCLC pour l'entraînement
--   `preprocess_nnunet.slurm` : Script SLURM pour prétraiter les données
--   `train_nnunet.slurm` : Script SLURM pour l'entraînement du modèle nnUNet
-
-### 2. CellViT++
-
-[CellViT++](https://github.com/TIO-IKIM/CellViT) est un framework de vision par transformateur pour la segmentation et la classification des cellules dans des images histologiques.
-
-#### Scripts principaux:
-
--   `prepare_puma_for_cellvit.py` : Prépare les données PUMA pour l'entraînement avec CellViT
--   `prepare_puma_for_cellvit_segmentation.py` : Prépare les données pour la tâche de segmentation
--   `train_cellvit_classifier.slurm` : Script SLURM pour l'entraînement du classificateur CellViT
--   `training-configuration.yaml` : Configuration pour l'entraînement du modèle
-
-### 3. HoVer-Net
-
-[HoVer-Net](https://github.com/vqdang/hover_net) est une architecture pour la segmentation des noyaux cellulaires et la classification des types de cellules.
-
-#### Scripts principaux:
-
--   `preprocess_data_hovernet.py` : Script de prétraitement des données pour HoVer-Net
--   `train_hovernet.slurm` : Script SLURM pour l'entraînement du modèle
--   Les scripts originaux du framework se trouvent dans le dossier `hovernet/hover_net/`
-
-### 4. Diaporama et Visualisation
-
-Le dossier `diaporama/` contient des notebooks et documents pour présenter et visualiser les résultats du projet:
-
--   `diaporama.ipynb` / `diaporama.md` / `diaporama.pdf` : Présentations du projet sous différents formats
--   `wandbinfo.ipynb` : Notebook pour visualiser les logs d'expériences avec Weights & Biases
-
-## 🗃️ Données
-
-Le projet utilise principalement des datasets histopathologiques:
-
--   Images de ROI (Regions of Interest) au format TIF
--   Annotations au format GeoJSON pour les noyaux et les tissus
--   Données contextuelles pour une analyse plus approfondie
-
-Les données se trouvent dans le dossier `dataset/` et sont organisées par type d'annotation.
-
-## 🚀 Utilisation des modèles
-
-### nnUNet
+Clone the repository with its submodules:
 
 ```bash
-# Préparation des données PUMA pour nnUNet
-cd nnunet
-python prepare_dataset_puma_nnunet.py
-
-# Lancer l'entraînement avec SLURM
-sbatch train_nnunet.slurm
+git clone --recurse-submodules https://github.com/AlixANNERAUD/Deep_learning_project.git
+cd Deep_learning_project
 ```
 
-### CellViT++
+Set up the environment for the approach you want to explore:
 
 ```bash
-# Préparation des données pour CellViT
 cd cellvit_plus_plus
-python prepare_puma_for_cellvit.py
-
-# Lancer l'entraînement du classificateur
-sbatch train_cellvit_classifier.slurm
-```
-
-### HoVer-Net
-
-```bash
-# Prétraitement des données
-cd hovernet
-python preprocess_data_hovernet.py --images ../dataset/01_training_dataset_tif_ROIs \
-                                  --nucleis ../dataset/01_training_dataset_geojson_nuclei \
-                                  --tissues ../dataset/01_training_dataset_geojson_tissue \
-                                  --output processed_data \
-                                  --visualize
-
-# Lancer l'entraînement avec SLURM
-sbatch train_hovernet.slurm
-```
-
-## 🔄 Gestion des environnements avec uv
-
-Chaque sous-module du projet a son propre environnement virtuel géré par uv:
-
-```bash
-# Installer l'environnement d'un sous-module spécifique
-cd [nom_du_module]
-uv lock
 uv sync
 ```
 
-Les fichiers `uv.lock` dans chaque sous-répertoire spécifient les versions exactes des dépendances pour garantir la reproductibilité.
+For another model, run `uv sync` inside `nnunet/` or `hovernet/` instead. Each directory contains its own `pyproject.toml` and `uv.lock`.
 
-## 📝 Note sur les submodules
-
-Le projet utilise plusieurs submodules Git:
-
-1. **CellViT-plus-plus**: Implémentation du framework CellViT intégrée dans notre dossier `cellvit_plus_plus/CellViT-plus-plus/`
-2. **hover_net**: Implémentation de HoVer-Net intégrée dans notre dossier `hovernet/hover_net/`
-3. **nnUNet**: Framework de segmentation intégré dans notre dossier `nnunet/nnUNet/`
-
-Ces submodules sont intégrés au projet principal et peuvent être mis à jour avec:
+For example, the CellViT++ segmentation dataset conversion script supports:
 
 ```bash
-git submodule update --init --recursive
+cd cellvit_plus_plus
+uv run prepare_puma_for_cellvit_segmentation.py --help
 ```
 
-## 🛠 Customisations
+You will need to obtain the datasets separately, set the appropriate input/output paths, and review the **PUMA label mappings** in the conversion scripts before generating training data. The checked-in mappings are not fully configured.
 
-Des classes et fonctions personnalisées ont été développées pour adapter les frameworks existants à nos besoins spécifiques:
+### GPU / cluster training
 
--   `nnunet_custom_classes/`: Extensions personnalisées pour nnUNet
--   Configurations spécifiques pour chaque framework dans leurs dossiers respectifs
+Training scripts are provided for SLURM:
 
-## 🤝 Contributeurs
+- [CellViT++ classifier](cellvit_plus_plus/train_cellvit_classifier.slurm)
+- [nnU-Net preprocessing](nnunet/preprocess_nnunet.slurm) and [training](nnunet/train_nnunet.slurm)
+- [HoVer-Net training](hovernet/train_hovernet.slurm)
 
-Ce projet est développé dans le cadre d'un cours à l'INSA Rouen.
+**These scripts are research-environment specific.** Before submitting a job, update the hard-coded filesystem paths, SLURM account/partition, GPU allocation, model checkpoints, and datasets for your own environment. A clean end-to-end run is **not guaranteed** from the repository alone.
 
-## 📄 Licence
+The dataset, model weights, and original cluster storage are **not bundled with this repository**. The checked-in DVC configuration points to a local storage path rather than a portable public dataset remote.
 
-Ce projet est distribué sous licence spécifiée dans le fichier LICENSE à la racine du projet.
+## Project context
+
+This was a course project at [INSA Rouen Normandie](https://www.insa-rouen.fr/) by **[Alix ANNERAUD](https://alix.anneraud.fr/) and Quentin Béral**.
+
+Our [presentation notebook](diaporama/diaporama.ipynb) covers the motivation, model choices, experiment logs, results, and the difficulties we encountered.
+
+This is **educational research code**, not a clinically validated diagnostic system.
+
+## License
+
+The original code in this repository is distributed under the [MIT License](LICENSE). Third-party model submodules and datasets retain their respective licenses and terms.
